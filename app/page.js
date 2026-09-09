@@ -1,18 +1,35 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { grievances } from '../data/grievances';
+import { grievances as seedGrievances } from '../data/grievances';
+
+const STORAGE_KEY = 'sm_custom_grievances';
 
 export default function Dashboard() {
+  const [customGrievances, setCustomGrievances] = useState([]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      if (Array.isArray(saved)) setCustomGrievances(saved);
+    } catch {
+      setCustomGrievances([]);
+    }
+  }, []);
+
+  const grievances = useMemo(() => [...customGrievances, ...seedGrievances], [customGrievances]);
   const open = grievances.filter(g => g.status !== 'Closed').length;
   const high = grievances.filter(g => g.risk === 'High' && g.status !== 'Closed').length;
   const closed = grievances.filter(g => g.status === 'Closed').length;
-  const avg = Math.round(grievances.reduce((s, g) => s + g.progress, 0) / grievances.length);
+  const avg = grievances.length ? Math.round(grievances.reduce((s, g) => s + Number(g.progress || 0), 0) / grievances.length) : 0;
 
   return (
     <div className="page-wrap">
       <div className="page-heading">
         <div>
           <h1>Executive Dashboard</h1>
-          <p>Dummy monitoring workspace — replace with validated data later.</p>
+          <p>Starter monitoring workspace — replace with validated data later.</p>
         </div>
       </div>
 
@@ -28,7 +45,7 @@ export default function Dashboard() {
           <div className="panel-head">
             <div>
               <h2>Recent Grievances</h2>
-              <p>Latest dummy cases</p>
+              <p>Starter cases</p>
             </div>
             <Link href="/grievances" className="text-link">View tracker →</Link>
           </div>
