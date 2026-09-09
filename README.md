@@ -1,8 +1,10 @@
-# System Monitoring V8.3 — Edit & Delete
+# V8.6 Grievance Detail Route Fix
 
-Adds:
-- Audit Monitoring: edit from calendar or table, delete audit, replace audit report while editing.
-- Certification Monitoring: edit and delete controls.
-- Deleting a certification keeps existing audit rows (certification_id becomes null) because the database FK uses ON DELETE SET NULL.
+Fixes `Case not found` when opening a grievance detail.
 
-No SQL changes are required. Upload the `app` folder to GitHub and commit.
+The detail page now accepts both:
+- Case ID routes such as `/grievances/GRV-0001`
+- Supabase UUID routes such as `/grievances/<uuid>`
+
+Upload the `app` folder to the existing GitHub repository and commit.
+No SQL/database change is required.
