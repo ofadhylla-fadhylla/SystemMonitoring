@@ -1,5 +1,12 @@
-# V8.1 Audit Calendar Range Fix
+# System Monitoring V8.2 — Audit Calendar Layout Fix
 
-Fixes multi-day audits so an audit with Start Date 14 Sep and End Date 18 Sep appears on 14, 15, 16, 17 and 18 Sep in the calendar.
+This patch restores the 7-column monthly calendar layout and keeps multi-day audits visible on every date from Start Date through End Date.
 
-Upload the `app` folder to the existing GitHub repository and commit. Vercel will redeploy automatically.
+Upload these paths to the existing GitHub repository:
+
+- `app/audits/page.js`
+- `app/globals.css`
+
+Commit message suggestion: `Fix audit calendar layout and multi-day range`
+
+No SQL changes are required. Existing audit records remain in Supabase.

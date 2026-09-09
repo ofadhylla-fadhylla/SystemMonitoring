@@ -168,17 +168,19 @@ export default function AuditMonitoring() {
       </section>
 
       <section className="panel calendar-panel">
-        <div className="calendar-grid calendar-header">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><div key={d}>{d}</div>)}</div>
-        <div className="calendar-grid">
+        <div className="calendar-grid audit-calendar-grid calendar-header audit-calendar-header" style={{display:'grid',gridTemplateColumns:'repeat(7,minmax(0,1fr))',width:'100%'}}>{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><div key={d}>{d}</div>)}</div>
+        <div className="calendar-grid audit-calendar-grid" style={{display:'grid',gridTemplateColumns:'repeat(7,minmax(0,1fr))',width:'100%'}}>
           {calendar.map((cell, idx) => {
             if (!cell.date) return <div className="calendar-cell blank" key={`blank-${idx}`}></div>;
             const iso = isoLocal(cell.date);
             const events = calendarEvents.filter(e=>e.date===iso);
-            return <div className={`calendar-cell ${iso===todayISO()?'today':''}`} key={iso}>
-              <div className="calendar-day">{cell.date.getDate()}</div>
-              <div className="calendar-events">
-                {events.slice(0,3).map(ev=><div key={ev.key} className={`calendar-event ${ev.kind}`} title={`${ev.title} — ${ev.subtitle}`}>
-                  <strong>{ev.title}</strong><span>{companyMap[ev.companyId]?.company_code || ''}</span>
+            return <div className={`calendar-cell audit-calendar-cell ${iso===todayISO()?'today':''}`} key={iso}>
+              <div className="calendar-day audit-calendar-day">{cell.date.getDate()}</div>
+              <div className="calendar-events audit-calendar-events">
+                {events.slice(0,3).map(ev=><div key={ev.key} className={`calendar-event audit-calendar-event ${ev.kind} ${ev.rangePosition ? `range-${ev.rangePosition}` : ''}`} title={`${ev.title} — ${ev.subtitle}`}>
+                  <strong>{ev.title}</strong>
+                  <span>{companyMap[ev.companyId]?.company_code || ''}</span>
+                  {ev.kind==='audit' && ev.rangePosition && ev.rangePosition!=='single' ? <span className="audit-calendar-range-label">{ev.rangePosition==='start'?'Start':ev.rangePosition==='end'?'End':'Continues'}</span> : null}
                 </div>)}
                 {events.length>3 ? <div className="calendar-more">+{events.length-3} more</div> : null}
               </div>
