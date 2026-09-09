@@ -17,7 +17,7 @@ const emptyUpdate = {
 };
 
 const emptyEdit = {
-  company: '', location: '', category: 'Land Conflict', title: '', source: '', opened: '',
+  companyId: '', siteId: '', company: '', location: '', category: 'Land Conflict', title: '', source: '', opened: '',
   risk: 'Medium', status: 'Open', progress: 0, pic: '', nextAction: '', dueDate: '', summary: '',
 };
 
@@ -49,6 +49,8 @@ export default function GrievanceDetail() {
   const [actions, setActions] = useState([]);
   const [evidence, setEvidence] = useState([]);
   const [closure, setClosure] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [sites, setSites] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [pageError, setPageError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -106,20 +108,24 @@ export default function GrievanceDetail() {
     const grievance = mapDbCase(caseRow);
     setG(grievance);
 
-    const [updatesRes, actionsRes, evidenceRes, closureRes] = await Promise.all([
+    const [updatesRes, actionsRes, evidenceRes, closureRes, companiesRes, sitesRes] = await Promise.all([
       supabase.from('grievance_updates').select('*').eq('grievance_id', caseRow.id).order('update_date', { ascending: true }).order('created_at', { ascending: true }),
       supabase.from('grievance_actions').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: true }),
       supabase.from('grievance_evidence').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: true }),
       supabase.from('grievance_closures').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: false }).limit(1),
+      supabase.from('companies').select('*').order('company_code'),
+      supabase.from('sites').select('*').order('site_name'),
     ]);
 
-    const childError = updatesRes.error || actionsRes.error || evidenceRes.error || closureRes.error;
+    const childError = updatesRes.error || actionsRes.error || evidenceRes.error || closureRes.error || companiesRes.error || sitesRes.error;
     if (childError) setPageError(childError.message);
 
     setCaseUpdates((updatesRes.data || []).map(mapDbUpdate));
     setActions((actionsRes.data || []).map(mapDbAction));
     setEvidence((evidenceRes.data || []).map(mapDbEvidence));
     setClosure(closureRes.data?.[0] ? mapDbClosure(closureRes.data[0]) : null);
+    setCompanies(companiesRes.data || []);
+    setSites(sitesRes.data || []);
     setLoaded(true);
   }
 
@@ -166,7 +172,7 @@ export default function GrievanceDetail() {
   function openEditForm() {
     if (!g) return;
     setEditForm({
-      company: g.company || '', location: g.location || '', category: g.category || 'Other', title: g.title || '',
+      companyId: g.companyId || '', siteId: g.siteId || '', company: g.company || '', location: g.location || '', category: g.category || 'Other', title: g.title || '',
       source: g.source || '', opened: g.opened || '', risk: g.risk || 'Medium', status: g.status || 'Open',
       progress: Number(g.progress || 0), pic: g.pic || '', nextAction: g.nextAction || '', dueDate: g.dueDate || '', summary: g.summary || '',
     });
@@ -247,9 +253,13 @@ export default function GrievanceDetail() {
     setBusy(true);
     setPageError('');
 
+    const selectedCompany = companies.find(c => c.id === editForm.companyId);
+    const selectedSite = sites.find(s => s.id === editForm.siteId);
     const { error } = await supabase.from('grievances').update({
-      company: editForm.company.trim(),
-      site: editForm.location.trim(),
+      company_id: editForm.companyId || null,
+      site_id: editForm.siteId || null,
+      company: selectedCompany ? selectedCompany.company_code : editForm.company.trim(),
+      site: selectedSite ? selectedSite.site_name : editForm.location.trim(),
       category: editForm.category,
       issue_title: editForm.title.trim(),
       complaint_source: editForm.source.trim() || null,
@@ -725,9 +735,9 @@ export default function GrievanceDetail() {
         <Modal onClose={() => !busy && setShowEditForm(false)} title="Edit Grievance" subtitle={`${g.id} — update the core grievance record.`} wide>
           <form onSubmit={saveEdit}>
             <div className="form-grid">
-              <Field label="Company *"><input required value={editForm.company} onChange={e=>updateEditForm('company', e.target.value)} /></Field>
-              <Field label="Site / Location *"><input required value={editForm.location} onChange={e=>updateEditForm('location', e.target.value)} /></Field>
-              <Field label="Category"><select value={editForm.category} onChange={e=>updateEditForm('category', e.target.value)}>{['Land Conflict','Environmental','Social','Labor','HCV / HCS','Legal / Permit','Other'].map(v=><option key={v}>{v}</option>)}</select></Field>
+              <Field label="Company *"><select required value={editForm.companyId} onChange={e=>setEditForm(prev=>({...prev, companyId:e.target.value, siteId:'', location:'', company:companies.find(c=>c.id===e.target.value)?.company_code || prev.company}))}><option value="">Select company…</option>{companies.filter(c=>c.status==='Active').map(c=><option key={c.id} value={c.id}>{c.company_code} — {c.company_name}</option>)}</select></Field>
+              <Field label="Site / Location"><select value={editForm.siteId} onChange={e=>setEditForm(prev=>({...prev, siteId:e.target.value, location:sites.find(s=>s.id===e.target.value)?.site_name || ''}))}><option value="">Company level / not specified</option>{sites.filter(s=>s.company_id===editForm.companyId&&s.status==='Active').map(s=><option key={s.id} value={s.id}>{s.site_name} ({s.site_type})</option>)}</select></Field>
+              <Field label="Category"><select value={editForm.category} onChange={e=>updateEditForm('category', e.target.value)}>{['Land Conflict','Environmental','Social','Labor','HCV / HCS','Deforestation / NDPE','Legal / Permit','Supplier','Buyer Requirement','Other'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Issue / Title *"><input required value={editForm.title} onChange={e=>updateEditForm('title', e.target.value)} /></Field>
               <Field label="Complaint Source"><input value={editForm.source} onChange={e=>updateEditForm('source', e.target.value)} /></Field>
               <Field label="Opened Date"><input type="date" value={editForm.opened} onChange={e=>updateEditForm('opened', e.target.value)} /></Field>
@@ -854,7 +864,7 @@ function MiniStat({ label, value, danger = false }) { return <div className={`mi
 
 function mapDbCase(row) {
   return {
-    rowId: row.id, id: row.case_id, company: row.company || '', location: row.site || '', category: row.category || '',
+    rowId: row.id, id: row.case_id, companyId: row.company_id || '', siteId: row.site_id || '', company: row.company || '', location: row.site || '', category: row.category || '',
     title: row.issue_title || '', source: row.complaint_source || '', opened: row.opened_date || '', risk: row.risk_level || 'Medium',
     status: row.status || 'Open', progress: Number(row.progress || 0), pic: row.pic || '', nextAction: row.next_action || '', dueDate: row.due_date || '', summary: row.case_summary || '',
   };
