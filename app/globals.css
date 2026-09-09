@@ -7,3 +7,22 @@
 .update-modal{width:min(760px,100%)}
 .timeline-meta{margin-top:8px;padding-top:8px;border-top:1px solid #e3eae5;font-size:10px;color:#7c8b82}
 .starter-warning{margin-top:16px;padding:11px 12px;background:#fff8df;border:1px solid #f0df9e;border-radius:9px;color:#745d16;font-size:11px;line-height:1.45}
+
+/* V4 - edit grievance + action plan */
+.detail-actions{flex-wrap:wrap;justify-content:flex-end;align-items:center}
+.wide-modal{width:min(900px,100%)}
+.readonly-input{background:#f3f6f4!important;color:#6f7e75!important}
+.action-panel-head{margin-bottom:14px}
+.action-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.mini-stat{border:1px solid #e1e8e3;background:#f8faf9;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:5px}
+.mini-stat span{font-size:10px;text-transform:uppercase;letter-spacing:.55px;color:#78877e;font-weight:700}
+.mini-stat strong{font-size:20px}
+.mini-stat.danger{background:#fff1ef;border-color:#f1c8c2;color:#9b342d}
+.action-table-wrap{border:1px solid #e7ece9;border-radius:11px}
+.action-table{min-width:1030px}
+.action-description{min-width:260px;max-width:390px;line-height:1.4}
+.priority-chip,.due-chip{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:10px;font-weight:800;white-space:nowrap}
+.priority-chip.high{background:#fde9e7;color:#a43f35}.priority-chip.medium{background:#fff2d5;color:#946710}.priority-chip.low{background:#e7f5eb;color:#2c7844}
+.due-chip.overdue{background:#fde9e7;color:#a43f35}.due-chip.due-soon{background:#fff2d5;color:#946710}.due-chip.on-track{background:#e7f5eb;color:#2c7844}.due-chip.completed{background:#e5eefb;color:#315f9b}.due-chip.no-due-date{background:#eef1ef;color:#66756c}
+.action-empty{min-height:150px}.action-empty strong{font-size:14px;color:#3d4e44}.action-empty p{margin:7px 0 0;color:#7d8b83}
+@media(max-width:800px){.action-summary{grid-template-columns:repeat(2,1fr)}.detail-actions{justify-content:flex-start}}
