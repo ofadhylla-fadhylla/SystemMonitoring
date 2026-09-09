@@ -7,7 +7,7 @@ const menu = [
   ['/audits', 'Audit Monitoring', '▣'],
   ['/certificates', 'Certification Monitoring', '◈'],
   ['/master-data', 'Master Company & Site', '▦'],
-  ['/documents', 'Documents', '▤'],
+  ['/documents', 'NDPE Implementation', '▤'],
 ];
 
 export default function Sidebar() {
@@ -18,7 +18,7 @@ export default function Sidebar() {
         <div><div className="brand-title">SYSTEM</div><div className="brand-subtitle">MONITORING</div></div>
       </div>
       <nav>{menu.map(([href,label,icon])=><Link key={href} href={href} className="nav-item"><span className="nav-icon">{icon}</span><span>{label}</span></Link>)}</nav>
-      <div className="sidebar-note"><strong>Supabase Mode</strong><span>Grievance, certification, audit calendar & private reports.</span></div>
+      <div className="sidebar-note"><strong>Supabase Mode</strong><span>Grievance, NDPE, certification, audit calendar & private reports.</span></div>
     </aside>
   );
 }

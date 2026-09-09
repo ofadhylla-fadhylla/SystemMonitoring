@@ -1,6 +1,6 @@
 {
   "name": "system-monitoring-starter",
-  "version": "0.8.0",
+  "version": "0.8.4",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,6 +11,7 @@
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "docx": "latest"
   }
 }
