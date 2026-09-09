@@ -3,16 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { grievances as seedGrievances } from '../../../data/grievances';
+import { supabase, getSupabaseConfigError } from '../../../lib/supabaseClient';
 
-const CUSTOM_KEY = 'sm_custom_grievances';
-const OVERRIDES_KEY = 'sm_grievance_overrides';
-const UPDATES_KEY = 'sm_grievance_updates';
-const ACTIONS_KEY = 'sm_grievance_actions';
-const EVIDENCE_KEY = 'sm_grievance_evidence';
-const CLOSURE_KEY = 'sm_grievance_closure';
-const EVIDENCE_DB = 'sm_system_monitoring_evidence';
-const EVIDENCE_STORE = 'files';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 function todayISO() {
@@ -20,84 +12,46 @@ function todayISO() {
 }
 
 const emptyUpdate = {
-  date: '',
-  title: 'Follow-up Update',
-  description: '',
-  updatedBy: '',
-  status: 'In Progress',
-  progress: 0,
-  nextAction: '',
-  dueDate: '',
+  date: '', title: 'Follow-up Update', description: '', updatedBy: '',
+  status: 'In Progress', progress: 0, nextAction: '', dueDate: '',
 };
 
 const emptyEdit = {
-  company: '',
-  location: '',
-  category: 'Land Conflict',
-  title: '',
-  source: '',
-  opened: '',
-  risk: 'Medium',
-  status: 'Open',
-  progress: 0,
-  pic: '',
-  nextAction: '',
-  dueDate: '',
-  summary: '',
-};
-
-const emptyEvidence = {
-  id: '',
-  title: '',
-  category: 'Meeting Minutes',
-  evidenceDate: '',
-  uploadedBy: '',
-  linkedActionId: '',
-  description: '',
-  file: null,
+  company: '', location: '', category: 'Land Conflict', title: '', source: '', opened: '',
+  risk: 'Medium', status: 'Open', progress: 0, pic: '', nextAction: '', dueDate: '', summary: '',
 };
 
 const emptyAction = {
-  id: '',
-  description: '',
-  pic: '',
-  targetDate: '',
-  priority: 'Medium',
-  status: 'Open',
-  progress: 0,
-  completionDate: '',
-  remarks: '',
+  rowId: '', id: '', description: '', pic: '', targetDate: '', priority: 'Medium',
+  status: 'Open', progress: 0, completionDate: '', remarks: '',
+};
+
+const emptyEvidence = {
+  rowId: '', id: '', title: '', category: 'Meeting Minutes', evidenceDate: '', uploadedBy: '',
+  linkedActionUuid: '', description: '', file: null,
 };
 
 const emptyClosure = {
-  closureDate: '',
-  verifiedBy: '',
-  verificationMethod: 'Document Review',
-  outcome: 'Resolved',
-  closureSummary: '',
-  evidenceReference: '',
+  closureDate: '', verifiedBy: '', verificationMethod: 'Document Review', outcome: 'Resolved',
+  closureSummary: '', evidenceReference: '',
 };
 
 const emptyReopen = {
-  reopenDate: '',
-  reopenedBy: '',
-  reason: '',
-  progress: 90,
-  nextAction: '',
-  dueDate: '',
+  reopenDate: '', reopenedBy: '', reason: '', progress: 90, nextAction: '', dueDate: '',
 };
 
 export default function GrievanceDetail() {
   const params = useParams();
-  const id = params?.id;
+  const caseId = params?.id;
 
-  const [baseCase, setBaseCase] = useState(() => seedGrievances.find(x => x.id === id) || null);
-  const [override, setOverride] = useState({});
+  const [g, setG] = useState(null);
   const [caseUpdates, setCaseUpdates] = useState([]);
   const [actions, setActions] = useState([]);
   const [evidence, setEvidence] = useState([]);
   const [closure, setClosure] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
@@ -105,7 +59,7 @@ export default function GrievanceDetail() {
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
   const [showClosureForm, setShowClosureForm] = useState(false);
   const [showReopenForm, setShowReopenForm] = useState(false);
-  const [editingActionId, setEditingActionId] = useState(null);
+  const [editingActionRowId, setEditingActionRowId] = useState(null);
 
   const [form, setForm] = useState({ ...emptyUpdate, date: todayISO() });
   const [editForm, setEditForm] = useState(emptyEdit);
@@ -118,111 +72,84 @@ export default function GrievanceDetail() {
   const [evidenceError, setEvidenceError] = useState('');
 
   useEffect(() => {
-    try {
-      const savedCustom = safeParse(localStorage.getItem(CUSTOM_KEY), []);
-      const custom = Array.isArray(savedCustom) ? savedCustom : [];
-      const found = [...custom, ...seedGrievances].find(x => x.id === id) || null;
-      setBaseCase(found);
+    loadCase();
+  }, [caseId]);
 
-      const savedOverrides = safeParse(localStorage.getItem(OVERRIDES_KEY), {});
-      const allOverrides = savedOverrides && typeof savedOverrides === 'object' ? savedOverrides : {};
-      const thisOverride = allOverrides[id] || {};
-      setOverride(thisOverride);
-
-      const savedUpdates = safeParse(localStorage.getItem(UPDATES_KEY), {});
-      const allUpdates = savedUpdates && typeof savedUpdates === 'object' ? savedUpdates : {};
-      setCaseUpdates(Array.isArray(allUpdates[id]) ? allUpdates[id] : []);
-
-      const savedActions = safeParse(localStorage.getItem(ACTIONS_KEY), {});
-      const allActions = savedActions && typeof savedActions === 'object' ? savedActions : {};
-      setActions(Array.isArray(allActions[id]) ? allActions[id] : []);
-
-      const savedEvidence = safeParse(localStorage.getItem(EVIDENCE_KEY), {});
-      const allEvidence = savedEvidence && typeof savedEvidence === 'object' ? savedEvidence : {};
-      setEvidence(Array.isArray(allEvidence[id]) ? allEvidence[id] : []);
-
-      const savedClosure = safeParse(localStorage.getItem(CLOSURE_KEY), {});
-      const allClosure = savedClosure && typeof savedClosure === 'object' ? savedClosure : {};
-      setClosure(allClosure[id] || null);
-
-      const merged = { ...(found || {}), ...thisOverride };
-      setForm(prev => ({
-        ...prev,
-        date: todayISO(),
-        status: merged.status || 'In Progress',
-        progress: Number(merged.progress || 0),
-        nextAction: merged.nextAction || '',
-        dueDate: merged.dueDate || '',
-      }));
-    } catch {
-      setBaseCase(seedGrievances.find(x => x.id === id) || null);
-    } finally {
+  async function loadCase() {
+    const configError = getSupabaseConfigError();
+    if (configError || !supabase) {
+      setPageError(configError || 'Supabase is not configured.');
       setLoaded(true);
+      return;
     }
-  }, [id]);
 
-  const g = useMemo(() => baseCase ? { ...baseCase, ...override } : null, [baseCase, override]);
+    setLoaded(false);
+    setPageError('');
 
-  const timeline = useMemo(() => {
-    if (!g) return [];
-    const original = Array.isArray(baseCase?.timeline)
-      ? baseCase.timeline.map((item, index) => ({
-          key: `seed-${index}`,
-          date: item[0],
-          title: item[1],
-          description: item[2],
-          updatedBy: '',
-        }))
-      : [];
+    const { data: caseRow, error: caseError } = await supabase
+      .from('grievances')
+      .select('*')
+      .eq('case_id', caseId)
+      .maybeSingle();
 
-    const added = caseUpdates.map((item, index) => ({
-      key: item.id || `update-${index}`,
-      date: formatDisplayDate(item.date),
-      title: item.title,
-      description: item.description,
-      updatedBy: item.updatedBy || '',
-    }));
+    if (caseError) {
+      setPageError(caseError.message);
+      setLoaded(true);
+      return;
+    }
+    if (!caseRow) {
+      setG(null);
+      setLoaded(true);
+      return;
+    }
 
-    return [...original, ...added];
-  }, [g, baseCase, caseUpdates]);
+    const grievance = mapDbCase(caseRow);
+    setG(grievance);
+
+    const [updatesRes, actionsRes, evidenceRes, closureRes] = await Promise.all([
+      supabase.from('grievance_updates').select('*').eq('grievance_id', caseRow.id).order('update_date', { ascending: true }).order('created_at', { ascending: true }),
+      supabase.from('grievance_actions').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: true }),
+      supabase.from('grievance_evidence').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: true }),
+      supabase.from('grievance_closures').select('*').eq('grievance_id', caseRow.id).order('created_at', { ascending: false }).limit(1),
+    ]);
+
+    const childError = updatesRes.error || actionsRes.error || evidenceRes.error || closureRes.error;
+    if (childError) setPageError(childError.message);
+
+    setCaseUpdates((updatesRes.data || []).map(mapDbUpdate));
+    setActions((actionsRes.data || []).map(mapDbAction));
+    setEvidence((evidenceRes.data || []).map(mapDbEvidence));
+    setClosure(closureRes.data?.[0] ? mapDbClosure(closureRes.data[0]) : null);
+    setLoaded(true);
+  }
+
+  const timeline = useMemo(() => caseUpdates.map(item => ({
+    key: item.rowId,
+    date: formatDisplayDate(item.date),
+    title: item.title,
+    description: item.description,
+    updatedBy: item.updatedBy,
+  })), [caseUpdates]);
 
   const actionStats = useMemo(() => {
     const completed = actions.filter(a => a.status === 'Completed').length;
     const overdue = actions.filter(a => getDueState(a) === 'Overdue').length;
-    const open = actions.length - completed;
-    return { completed, overdue, open };
+    return { completed, overdue, open: actions.length - completed };
   }, [actions]);
 
   const evidenceStats = useMemo(() => {
     const totalBytes = evidence.reduce((sum, item) => sum + Number(item.fileSize || 0), 0);
-    const linked = evidence.filter(item => item.linkedActionId).length;
+    const linked = evidence.filter(item => item.linkedActionUuid).length;
     const latest = [...evidence].sort((a,b) => String(b.evidenceDate || '').localeCompare(String(a.evidenceDate || '')))[0];
     return { totalBytes, linked, latest };
   }, [evidence]);
 
-  function updateForm(field, value) {
-    setForm(prev => ({ ...prev, [field]: value }));
-  }
-
-  function updateEditForm(field, value) {
-    setEditForm(prev => ({ ...prev, [field]: value }));
-  }
-
-  function updateActionForm(field, value) {
-    setActionForm(prev => ({ ...prev, [field]: value }));
-  }
-
-  function updateEvidenceForm(field, value) {
-    setEvidenceForm(prev => ({ ...prev, [field]: value }));
-  }
-
-  function updateClosureForm(field, value) {
-    setClosureForm(prev => ({ ...prev, [field]: value }));
-  }
-
-  function updateReopenForm(field, value) {
-    setReopenForm(prev => ({ ...prev, [field]: value }));
-  }
+  function updateForm(field, value) { setForm(prev => ({ ...prev, [field]: value })); }
+  function updateEditForm(field, value) { setEditForm(prev => ({ ...prev, [field]: value })); }
+  function updateActionForm(field, value) { setActionForm(prev => ({ ...prev, [field]: value })); }
+  function updateEvidenceForm(field, value) { setEvidenceForm(prev => ({ ...prev, [field]: value })); }
+  function updateClosureForm(field, value) { setClosureForm(prev => ({ ...prev, [field]: value })); }
+  function updateReopenForm(field, value) { setReopenForm(prev => ({ ...prev, [field]: value })); }
 
   function openUpdateForm() {
     setForm({
@@ -239,164 +166,246 @@ export default function GrievanceDetail() {
   function openEditForm() {
     if (!g) return;
     setEditForm({
-      company: g.company || '',
-      location: g.location || '',
-      category: g.category || 'Other',
-      title: g.title || '',
-      source: g.source || '',
-      opened: normalizeInputDate(g.opened),
-      risk: g.risk || 'Medium',
-      status: g.status || 'Open',
-      progress: Number(g.progress || 0),
-      pic: g.pic || '',
-      nextAction: g.nextAction || '',
-      dueDate: normalizeInputDate(g.dueDate),
-      summary: g.summary || '',
+      company: g.company || '', location: g.location || '', category: g.category || 'Other', title: g.title || '',
+      source: g.source || '', opened: g.opened || '', risk: g.risk || 'Medium', status: g.status || 'Open',
+      progress: Number(g.progress || 0), pic: g.pic || '', nextAction: g.nextAction || '', dueDate: g.dueDate || '', summary: g.summary || '',
     });
     setShowEditForm(true);
   }
 
   function openNewActionForm() {
-    setEditingActionId(null);
-    setActionForm({ ...emptyAction, id: createActionId(actions), targetDate: g?.dueDate || '' });
+    setEditingActionRowId(null);
+    setActionForm({ ...emptyAction, targetDate: g?.dueDate || '' });
+    setShowActionForm(true);
+  }
+
+  function openEditActionForm(action) {
+    setEditingActionRowId(action.rowId);
+    setActionForm({ ...emptyAction, ...action });
     setShowActionForm(true);
   }
 
   function openEvidenceForm() {
     setEvidenceError('');
-    setEvidenceForm({ ...emptyEvidence, id: createEvidenceId(evidence), evidenceDate: todayISO() });
+    setEvidenceForm({ ...emptyEvidence, evidenceDate: todayISO() });
     setShowEvidenceForm(true);
   }
 
   function openClosureForm() {
     setClosureError('');
-    setClosureForm({
-      ...emptyClosure,
-      closureDate: todayISO(),
-      evidenceReference: evidence[0]?.id || '',
-    });
+    setClosureForm({ ...emptyClosure, closureDate: todayISO(), evidenceReference: evidence[0]?.rowId || '' });
     setShowClosureForm(true);
   }
 
   function openReopenForm() {
     setClosureError('');
-    setReopenForm({
-      ...emptyReopen,
-      reopenDate: todayISO(),
-      progress: 90,
-      nextAction: '',
-      dueDate: '',
-    });
+    setReopenForm({ ...emptyReopen, reopenDate: todayISO(), progress: 90 });
     setShowReopenForm(true);
   }
 
-  function openEditActionForm(action) {
-    setEditingActionId(action.id);
-    setActionForm({
-      ...emptyAction,
-      ...action,
-      targetDate: normalizeInputDate(action.targetDate),
-      completionDate: normalizeInputDate(action.completionDate),
-      progress: Number(action.progress || 0),
+  async function saveUpdate(e) {
+    e.preventDefault();
+    if (!g || !supabase) return;
+    setBusy(true);
+    setPageError('');
+
+    const progress = clampProgress(form.progress);
+    const { error: updateInsertError } = await supabase.from('grievance_updates').insert({
+      grievance_id: g.rowId,
+      update_date: form.date || todayISO(),
+      updated_by: form.updatedBy.trim() || null,
+      update_title: form.title.trim() || 'Follow-up Update',
+      notes: form.description.trim(),
+      case_status: form.status,
+      progress,
+      next_action: form.nextAction.trim() || null,
+      due_date: form.dueDate || null,
     });
-    setShowActionForm(true);
-  }
 
-  function saveUpdate(e) {
-    e.preventDefault();
-    if (!g) return;
+    if (updateInsertError) {
+      setPageError(updateInsertError.message);
+      setBusy(false);
+      return;
+    }
 
-    const cleanProgress = clampProgress(form.progress);
-    const newUpdate = {
-      id: `UPD-${Date.now()}`,
-      date: form.date || todayISO(),
-      title: form.title.trim() || 'Follow-up Update',
-      description: form.description.trim(),
-      updatedBy: form.updatedBy.trim(),
-      createdAt: new Date().toISOString(),
-    };
-
-    const updatedCaseUpdates = [...caseUpdates, newUpdate];
-    setCaseUpdates(updatedCaseUpdates);
-    persistMapItem(UPDATES_KEY, g.id, updatedCaseUpdates);
-
-    const nextOverride = {
-      ...override,
+    const { error: caseUpdateError } = await supabase.from('grievances').update({
       status: form.status,
-      progress: cleanProgress,
-      nextAction: form.nextAction.trim(),
-      dueDate: form.dueDate,
-      lastUpdated: newUpdate.date,
-    };
-    setOverride(nextOverride);
-    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
+      progress,
+      next_action: form.nextAction.trim() || null,
+      due_date: form.dueDate || null,
+    }).eq('id', g.rowId);
+
+    if (caseUpdateError) setPageError(caseUpdateError.message);
     setShowUpdateForm(false);
+    setBusy(false);
+    await loadCase();
   }
 
-  function saveEdit(e) {
+  async function saveEdit(e) {
     e.preventDefault();
-    if (!g) return;
+    if (!g || !supabase) return;
+    setBusy(true);
+    setPageError('');
 
-    const nextOverride = {
-      ...override,
+    const { error } = await supabase.from('grievances').update({
       company: editForm.company.trim(),
-      location: editForm.location.trim(),
+      site: editForm.location.trim(),
       category: editForm.category,
-      title: editForm.title.trim(),
-      source: editForm.source.trim(),
-      opened: editForm.opened,
-      risk: editForm.risk,
+      issue_title: editForm.title.trim(),
+      complaint_source: editForm.source.trim() || null,
+      opened_date: editForm.opened || null,
+      risk_level: editForm.risk,
       status: editForm.status,
       progress: clampProgress(editForm.progress),
-      pic: editForm.pic.trim(),
-      nextAction: editForm.nextAction.trim(),
-      dueDate: editForm.dueDate,
-      summary: editForm.summary.trim(),
-      lastUpdated: todayISO(),
-    };
+      pic: editForm.pic.trim() || null,
+      next_action: editForm.nextAction.trim() || null,
+      due_date: editForm.dueDate || null,
+      case_summary: editForm.summary.trim() || null,
+    }).eq('id', g.rowId);
 
-    setOverride(nextOverride);
-    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
-    setShowEditForm(false);
+    if (error) setPageError(error.message);
+    else setShowEditForm(false);
+    setBusy(false);
+    await loadCase();
   }
 
-  function saveAction(e) {
+  async function saveAction(e) {
     e.preventDefault();
-    if (!g) return;
+    if (!g || !supabase) return;
+    setBusy(true);
+    setPageError('');
 
     const status = actionForm.status;
-    const cleanProgress = status === 'Completed' ? 100 : clampProgress(actionForm.progress);
-    const completionDate = status === 'Completed'
-      ? (actionForm.completionDate || todayISO())
-      : actionForm.completionDate;
-
-    const clean = {
-      id: actionForm.id || createActionId(actions),
-      description: actionForm.description.trim(),
-      pic: actionForm.pic.trim(),
-      targetDate: actionForm.targetDate,
+    const progress = status === 'Completed' ? 100 : clampProgress(actionForm.progress);
+    const completionDate = status === 'Completed' ? (actionForm.completionDate || todayISO()) : (actionForm.completionDate || null);
+    const payload = {
+      grievance_id: g.rowId,
+      action_description: actionForm.description.trim(),
+      pic: actionForm.pic.trim() || null,
       priority: actionForm.priority,
+      target_date: actionForm.targetDate || null,
       status,
-      progress: cleanProgress,
-      completionDate,
-      remarks: actionForm.remarks.trim(),
-      updatedAt: new Date().toISOString(),
+      progress,
+      completion_date: completionDate,
+      remarks: actionForm.remarks.trim() || null,
     };
 
-    const updatedActions = editingActionId
-      ? actions.map(a => a.id === editingActionId ? clean : a)
-      : [...actions, { ...clean, createdAt: new Date().toISOString() }];
+    let error;
+    if (editingActionRowId) {
+      ({ error } = await supabase.from('grievance_actions').update(payload).eq('id', editingActionRowId));
+    } else {
+      ({ error } = await supabase.from('grievance_actions').insert(payload));
+    }
 
-    setActions(updatedActions);
-    persistMapItem(ACTIONS_KEY, g.id, updatedActions);
-    setShowActionForm(false);
-    setEditingActionId(null);
+    if (error) setPageError(error.message);
+    else {
+      setShowActionForm(false);
+      setEditingActionRowId(null);
+    }
+    setBusy(false);
+    await loadCase();
   }
 
-
-  function saveClosure(e) {
+  async function saveEvidence(e) {
     e.preventDefault();
-    if (!g) return;
+    if (!g || !supabase) return;
+    setEvidenceError('');
+    const file = evidenceForm.file;
+    if (!file) {
+      setEvidenceError('Please choose a file to upload.');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setEvidenceError('Maximum file size is 10 MB per file.');
+      return;
+    }
+
+    setEvidenceBusy(true);
+    const safeName = sanitizeFileName(file.name);
+    const storagePath = `${g.id}/${Date.now()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('grievance-evidence')
+      .upload(storagePath, file, { upsert: false, contentType: file.type || undefined });
+
+    if (uploadError) {
+      setEvidenceError(`${uploadError.message}. Check that the private bucket grievance-evidence exists and Storage policies were created.`);
+      setEvidenceBusy(false);
+      return;
+    }
+
+    const { error: metadataError } = await supabase.from('grievance_evidence').insert({
+      grievance_id: g.rowId,
+      action_id: evidenceForm.linkedActionUuid || null,
+      evidence_title: evidenceForm.title.trim() || file.name,
+      category: evidenceForm.category,
+      evidence_date: evidenceForm.evidenceDate || todayISO(),
+      uploaded_by: evidenceForm.uploadedBy.trim() || null,
+      description: evidenceForm.description.trim() || null,
+      file_name: file.name,
+      storage_path: storagePath,
+      file_size: file.size,
+      mime_type: file.type || 'application/octet-stream',
+    });
+
+    if (metadataError) {
+      await supabase.storage.from('grievance-evidence').remove([storagePath]);
+      setEvidenceError(metadataError.message);
+      setEvidenceBusy(false);
+      return;
+    }
+
+    setShowEvidenceForm(false);
+    setEvidenceBusy(false);
+    await loadCase();
+  }
+
+  async function openEvidenceFile(item) {
+    if (!supabase || !item.storagePath) return;
+    const { data, error } = await supabase.storage.from('grievance-evidence').createSignedUrl(item.storagePath, 60);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  }
+
+  async function downloadEvidenceFile(item) {
+    if (!supabase || !item.storagePath) return;
+    const { data, error } = await supabase.storage.from('grievance-evidence').download(item.storagePath);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    const url = URL.createObjectURL(data);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = item.fileName || item.title || 'evidence';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  }
+
+  async function deleteEvidence(item) {
+    if (!supabase) return;
+    if (!confirm(`Delete evidence ${item.id} — ${item.title}?`)) return;
+    setEvidenceBusy(true);
+
+    const { error: dbError } = await supabase.from('grievance_evidence').delete().eq('id', item.rowId);
+    if (dbError) {
+      alert(dbError.message);
+      setEvidenceBusy(false);
+      return;
+    }
+    if (item.storagePath) await supabase.storage.from('grievance-evidence').remove([item.storagePath]);
+    setEvidenceBusy(false);
+    await loadCase();
+  }
+
+  async function saveClosure(e) {
+    e.preventDefault();
+    if (!g || !supabase) return;
     setClosureError('');
 
     const activeActions = actions.filter(a => a.status !== 'Completed');
@@ -413,186 +422,106 @@ export default function GrievanceDetail() {
       return;
     }
 
-    const record = {
-      ...closureForm,
-      closureDate: closureForm.closureDate || todayISO(),
-      verifiedBy: closureForm.verifiedBy.trim(),
-      closureSummary: closureForm.closureSummary.trim(),
-      closedAt: new Date().toISOString(),
-      reopened: false,
-    };
-    setClosure(record);
-    persistMapItem(CLOSURE_KEY, g.id, record);
+    setBusy(true);
+    const closureDate = closureForm.closureDate || todayISO();
+    const { error: closeError } = await supabase.from('grievance_closures').insert({
+      grievance_id: g.rowId,
+      closure_date: closureDate,
+      verified_by: closureForm.verifiedBy.trim(),
+      verification_method: closureForm.verificationMethod,
+      outcome: closureForm.outcome,
+      primary_evidence_id: closureForm.evidenceReference || null,
+      closure_summary: closureForm.closureSummary.trim(),
+    });
 
-    const nextOverride = {
-      ...override,
-      status: 'Closed',
-      progress: 100,
-      nextAction: '',
-      closedDate: record.closureDate,
-      lastUpdated: record.closureDate,
-    };
-    setOverride(nextOverride);
-    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
+    if (closeError) {
+      setClosureError(closeError.message);
+      setBusy(false);
+      return;
+    }
 
-    const closeUpdate = {
-      id: `UPD-${Date.now()}`,
-      date: record.closureDate,
-      title: 'Grievance Closed',
-      description: record.closureSummary,
-      updatedBy: record.verifiedBy,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedCaseUpdates = [...caseUpdates, closeUpdate];
-    setCaseUpdates(updatedCaseUpdates);
-    persistMapItem(UPDATES_KEY, g.id, updatedCaseUpdates);
-    setShowClosureForm(false);
+    const { error: caseError } = await supabase.from('grievances').update({
+      status: 'Closed', progress: 100, next_action: null,
+    }).eq('id', g.rowId);
+
+    if (!caseError) {
+      await supabase.from('grievance_updates').insert({
+        grievance_id: g.rowId,
+        update_date: closureDate,
+        updated_by: closureForm.verifiedBy.trim(),
+        update_title: 'Grievance Closed',
+        notes: closureForm.closureSummary.trim(),
+        case_status: 'Closed',
+        progress: 100,
+      });
+    }
+
+    if (caseError) setClosureError(caseError.message);
+    else setShowClosureForm(false);
+    setBusy(false);
+    await loadCase();
   }
 
-  function saveReopen(e) {
+  async function saveReopen(e) {
     e.preventDefault();
-    if (!g) return;
+    if (!g || !supabase || !closure) return;
     setClosureError('');
     if (!reopenForm.reopenedBy.trim() || !reopenForm.reason.trim()) {
       setClosureError('Reopened By and Reason are required.');
       return;
     }
 
-    const reopenRecord = {
-      ...(closure || {}),
-      reopened: true,
-      reopenDate: reopenForm.reopenDate || todayISO(),
-      reopenedBy: reopenForm.reopenedBy.trim(),
-      reopenReason: reopenForm.reason.trim(),
-      reopenedAt: new Date().toISOString(),
-    };
-    setClosure(reopenRecord);
-    persistMapItem(CLOSURE_KEY, g.id, reopenRecord);
+    setBusy(true);
+    const reopenDate = reopenForm.reopenDate || todayISO();
+    const progress = Math.min(99, clampProgress(reopenForm.progress));
 
-    const nextOverride = {
-      ...override,
+    const { error: closureUpdateError } = await supabase.from('grievance_closures').update({
+      reopened_at: reopenDate,
+      reopened_by: reopenForm.reopenedBy.trim(),
+      reopen_reason: reopenForm.reason.trim(),
+      reopen_due_date: reopenForm.dueDate || null,
+      reopen_next_action: reopenForm.nextAction.trim() || null,
+    }).eq('id', closure.rowId);
+
+    if (closureUpdateError) {
+      setClosureError(closureUpdateError.message);
+      setBusy(false);
+      return;
+    }
+
+    const { error: caseError } = await supabase.from('grievances').update({
       status: 'In Progress',
-      progress: clampProgress(reopenForm.progress),
-      nextAction: reopenForm.nextAction.trim(),
-      dueDate: reopenForm.dueDate,
-      closedDate: '',
-      lastUpdated: reopenRecord.reopenDate,
-    };
-    setOverride(nextOverride);
-    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
+      progress,
+      next_action: reopenForm.nextAction.trim() || null,
+      due_date: reopenForm.dueDate || null,
+    }).eq('id', g.rowId);
 
-    const reopenUpdate = {
-      id: `UPD-${Date.now()}`,
-      date: reopenRecord.reopenDate,
-      title: 'Grievance Reopened',
-      description: reopenRecord.reopenReason,
-      updatedBy: reopenRecord.reopenedBy,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedCaseUpdates = [...caseUpdates, reopenUpdate];
-    setCaseUpdates(updatedCaseUpdates);
-    persistMapItem(UPDATES_KEY, g.id, updatedCaseUpdates);
-    setShowReopenForm(false);
-  }
-
-  async function saveEvidence(e) {
-    e.preventDefault();
-    if (!g) return;
-    setEvidenceError('');
-    const file = evidenceForm.file;
-    if (!file) {
-      setEvidenceError('Please choose a file to upload.');
-      return;
-    }
-    if (file.size > MAX_FILE_BYTES) {
-      setEvidenceError('Starter mode limit: maximum file size is 10 MB per file.');
-      return;
+    if (!caseError) {
+      await supabase.from('grievance_updates').insert({
+        grievance_id: g.rowId,
+        update_date: reopenDate,
+        updated_by: reopenForm.reopenedBy.trim(),
+        update_title: 'Grievance Reopened',
+        notes: reopenForm.reason.trim(),
+        case_status: 'In Progress',
+        progress,
+        next_action: reopenForm.nextAction.trim() || null,
+        due_date: reopenForm.dueDate || null,
+      });
     }
 
-    setEvidenceBusy(true);
-    try {
-      const evidenceId = evidenceForm.id || createEvidenceId(evidence);
-      const storageId = `${g.id}-${evidenceId}-${Date.now()}`;
-      await putEvidenceBlob(storageId, file);
-
-      const record = {
-        id: evidenceId,
-        title: evidenceForm.title.trim() || file.name,
-        category: evidenceForm.category,
-        evidenceDate: evidenceForm.evidenceDate || todayISO(),
-        uploadedBy: evidenceForm.uploadedBy.trim(),
-        linkedActionId: evidenceForm.linkedActionId,
-        description: evidenceForm.description.trim(),
-        fileName: file.name,
-        fileType: file.type || 'application/octet-stream',
-        fileSize: file.size,
-        storageId,
-        createdAt: new Date().toISOString(),
-      };
-
-      const updated = [...evidence, record];
-      setEvidence(updated);
-      persistMapItem(EVIDENCE_KEY, g.id, updated);
-      setShowEvidenceForm(false);
-      setEvidenceForm({ ...emptyEvidence, evidenceDate: todayISO() });
-    } catch (err) {
-      console.error(err);
-      setEvidenceError('Upload could not be saved in this browser. Try a smaller file or another browser.');
-    } finally {
-      setEvidenceBusy(false);
-    }
+    if (caseError) setClosureError(caseError.message);
+    else setShowReopenForm(false);
+    setBusy(false);
+    await loadCase();
   }
 
-  async function openEvidenceFile(item) {
-    try {
-      const blob = await getEvidenceBlob(item.storageId);
-      if (!blob) {
-        alert('The file is not available in this browser. It may have been created on another device or browser.');
-        return;
-      }
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener,noreferrer');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch {
-      alert('Unable to open this evidence file.');
-    }
-  }
-
-  async function downloadEvidenceFile(item) {
-    try {
-      const blob = await getEvidenceBlob(item.storageId);
-      if (!blob) {
-        alert('The file is not available in this browser.');
-        return;
-      }
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = item.fileName || item.title || 'evidence';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 3000);
-    } catch {
-      alert('Unable to download this evidence file.');
-    }
-  }
-
-  async function deleteEvidence(item) {
-    if (!confirm(`Delete evidence ${item.id} — ${item.title}?`)) return;
-    try {
-      await deleteEvidenceBlob(item.storageId);
-    } catch {}
-    const updated = evidence.filter(x => x.id !== item.id);
-    setEvidence(updated);
-    persistMapItem(EVIDENCE_KEY, g.id, updated);
-  }
-
-  if (!loaded && !g) return <div className="page-wrap"><p>Loading case...</p></div>;
+  if (!loaded) return <div className="page-wrap"><p>Loading case from Supabase…</p></div>;
 
   if (!g) {
     return (
       <div className="page-wrap">
+        {pageError ? <div className="sync-error"><strong>Supabase error</strong><span>{pageError}</span></div> : null}
         <h1>Case not found</h1>
         <Link className="text-link" href="/grievances">← Back to tracker</Link>
       </div>
@@ -600,6 +529,9 @@ export default function GrievanceDetail() {
   }
 
   const caseDueState = getCaseDueState(g);
+  const primaryEvidenceLabel = closure?.evidenceReference
+    ? evidence.find(item => item.rowId === closure.evidenceReference)?.id || 'Evidence record'
+    : '-';
 
   return (
     <div className="page-wrap">
@@ -613,6 +545,8 @@ export default function GrievanceDetail() {
           <button className="secondary-btn" onClick={openEditForm}>Edit Grievance</button>
         </div>
       </div>
+
+      {pageError ? <div className="sync-error"><strong>Supabase warning</strong><span>{pageError}</span></div> : <div className="sync-success">● Live Supabase record</div>}
 
       <section className="detail-grid">
         <div className="panel">
@@ -650,7 +584,7 @@ export default function GrievanceDetail() {
               <div className="timeline-date">{item.date}</div>
               <div className="timeline-card">
                 <strong>{item.title}</strong>
-                <p>{item.description}</p>
+                <p>{item.description || '-'}</p>
                 {item.updatedBy ? <div className="timeline-meta">Updated by {item.updatedBy}</div> : null}
               </div>
             </div>
@@ -660,41 +594,24 @@ export default function GrievanceDetail() {
 
       <section className="panel">
         <div className="panel-head action-panel-head">
-          <div>
-            <h2>Action Plan</h2>
-            <p>Corrective and follow-up actions for this grievance</p>
-          </div>
+          <div><h2>Action Plan</h2><p>Corrective and follow-up actions for this grievance</p></div>
           <button className="primary-btn" onClick={openNewActionForm}>+ Add Action</button>
         </div>
-
         <div className="action-summary">
           <MiniStat label="Total" value={actions.length} />
           <MiniStat label="Open / Active" value={actionStats.open} />
           <MiniStat label="Overdue" value={actionStats.overdue} danger={actionStats.overdue > 0} />
           <MiniStat label="Completed" value={actionStats.completed} />
         </div>
-
         {actions.length ? (
           <div className="table-wrap action-table-wrap">
             <table className="action-table">
-              <thead>
-                <tr>
-                  <th>Action ID</th>
-                  <th>Action</th>
-                  <th>PIC</th>
-                  <th>Priority</th>
-                  <th>Target</th>
-                  <th>Due Status</th>
-                  <th>Status</th>
-                  <th>Progress</th>
-                  <th></th>
-                </tr>
-              </thead>
+              <thead><tr><th>Action ID</th><th>Action</th><th>PIC</th><th>Priority</th><th>Target</th><th>Due Status</th><th>Status</th><th>Progress</th><th></th></tr></thead>
               <tbody>
                 {actions.map(action => {
                   const dueState = getDueState(action);
                   return (
-                    <tr key={action.id}>
+                    <tr key={action.rowId}>
                       <td><strong>{action.id}</strong></td>
                       <td className="action-description">{action.description}<div className="muted">{action.remarks || 'No remarks'}</div></td>
                       <td>{action.pic || '-'}</td>
@@ -702,10 +619,7 @@ export default function GrievanceDetail() {
                       <td>{action.targetDate || '-'}</td>
                       <td><span className={`due-chip ${dueState.toLowerCase().replaceAll(' ', '-')}`}>{dueState}</span></td>
                       <td><span className="status-pill">{action.status}</span></td>
-                      <td>
-                        <div className="progress"><div style={{width:`${action.progress || 0}%`}}></div></div>
-                        <div className="muted">{action.progress || 0}%</div>
-                      </td>
+                      <td><div className="progress"><div style={{width:`${action.progress || 0}%`}}></div></div><div className="muted">{action.progress || 0}%</div></td>
                       <td><button className="view-btn" onClick={() => openEditActionForm(action)}>Edit</button></td>
                     </tr>
                   );
@@ -713,103 +627,60 @@ export default function GrievanceDetail() {
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="empty-state action-empty">
-            <div><strong>No action plan yet.</strong><p>Add corrective or follow-up actions and assign PICs and due dates.</p></div>
-          </div>
-        )}
+        ) : <div className="empty-state action-empty"><div><strong>No action plan yet.</strong><p>Add corrective or follow-up actions and assign PICs and due dates.</p></div></div>}
       </section>
 
       <section className="panel">
         <div className="panel-head evidence-panel-head">
-          <div><h2>Evidence & Documents</h2><p>Photos, letters, maps, minutes and corrective-action proof</p></div>
+          <div><h2>Evidence & Documents</h2><p>Private files stored in Supabase Storage</p></div>
           <button className="primary-btn" onClick={openEvidenceForm}>+ Upload Evidence</button>
         </div>
-
         <div className="action-summary evidence-summary">
           <MiniStat label="Total Files" value={evidence.length} />
           <MiniStat label="Linked to Action" value={evidenceStats.linked} />
           <MiniStat label="Storage" value={formatBytes(evidenceStats.totalBytes)} />
           <MiniStat label="Latest" value={evidenceStats.latest ? formatShortDate(evidenceStats.latest.evidenceDate) : '-'} />
         </div>
-
         {evidence.length ? (
           <div className="table-wrap evidence-table-wrap">
             <table className="evidence-table">
-              <thead>
-                <tr>
-                  <th>Evidence ID</th>
-                  <th>Document / Evidence</th>
-                  <th>Category</th>
-                  <th>Evidence Date</th>
-                  <th>Linked Action</th>
-                  <th>Uploaded By</th>
-                  <th>File</th>
-                  <th></th>
-                </tr>
-              </thead>
+              <thead><tr><th>Evidence ID</th><th>Document / Evidence</th><th>Category</th><th>Evidence Date</th><th>Linked Action</th><th>Uploaded By</th><th>File</th><th></th></tr></thead>
               <tbody>
                 {evidence.map(item => (
-                  <tr key={item.id}>
+                  <tr key={item.rowId}>
                     <td><strong>{item.id}</strong></td>
-                    <td className="evidence-title">
-                      <strong>{item.title}</strong>
-                      <div className="muted">{item.description || 'No description'}</div>
-                    </td>
-                    <td><span className="category-chip">{item.category}</span></td>
+                    <td className="evidence-title"><strong>{item.title}</strong><div className="muted">{item.description || 'No description'}</div></td>
+                    <td><span className="category-chip">{item.category || '-'}</span></td>
                     <td>{item.evidenceDate || '-'}</td>
-                    <td>{item.linkedActionId || '-'}</td>
+                    <td>{actions.find(a => a.rowId === item.linkedActionUuid)?.id || '-'}</td>
                     <td>{item.uploadedBy || '-'}</td>
-                    <td>
-                      <div className="file-cell">
-                        <strong>{item.fileName}</strong>
-                        <span>{formatBytes(item.fileSize)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button className="view-btn" onClick={() => openEvidenceFile(item)}>View</button>
-                        <button className="view-btn" onClick={() => downloadEvidenceFile(item)}>Download</button>
-                        <button className="danger-btn" onClick={() => deleteEvidence(item)}>Delete</button>
-                      </div>
-                    </td>
+                    <td><div className="file-cell"><strong>{item.fileName || '-'}</strong><span>{formatBytes(item.fileSize)}</span></div></td>
+                    <td><div className="row-actions">
+                      <button className="view-btn" onClick={() => openEvidenceFile(item)}>View</button>
+                      <button className="view-btn" onClick={() => downloadEvidenceFile(item)}>Download</button>
+                      <button className="danger-btn" onClick={() => deleteEvidence(item)}>Delete</button>
+                    </div></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="empty-state action-empty">
-            <div><strong>No evidence uploaded yet.</strong><p>Upload photos, PDFs, meeting minutes, letters, maps or proof of corrective action.</p></div>
-          </div>
-        )}
-        <div className="starter-warning">Starter mode: file metadata is stored in Local Storage and the actual file is stored in this browser's IndexedDB. Files are not shared with other devices yet.</div>
+        ) : <div className="empty-state action-empty"><div><strong>No evidence uploaded yet.</strong><p>Upload photos, PDFs, meeting minutes, letters, maps or proof of corrective action.</p></div></div>}
+        <div className="supabase-note">Private Storage: files are now centrally stored and can be accessed from another device that has access to this application.</div>
       </section>
 
       <section className="panel closure-panel">
         <div className="panel-head closure-panel-head">
-          <div>
-            <h2>Closure & Verification</h2>
-            <p>Close only after actions are completed and supporting evidence is available.</p>
-          </div>
+          <div><h2>Closure & Verification</h2><p>Close only after actions are completed and supporting evidence is available.</p></div>
           {g.status === 'Closed'
             ? <button className="secondary-btn" onClick={openReopenForm}>Reopen Grievance</button>
             : <button className="primary-btn" onClick={openClosureForm}>Close Grievance</button>}
         </div>
 
         <div className="closure-readiness">
-          <div className={`readiness-item ${actions.filter(a => a.status !== 'Completed').length === 0 ? 'ready' : 'blocked'}`}>
-            <span>Action Plan</span>
-            <strong>{actions.filter(a => a.status !== 'Completed').length === 0 ? 'Ready' : `${actions.filter(a => a.status !== 'Completed').length} active`}</strong>
-          </div>
-          <div className={`readiness-item ${evidence.length > 0 ? 'ready' : 'blocked'}`}>
-            <span>Evidence</span>
-            <strong>{evidence.length > 0 ? `${evidence.length} file(s)` : 'Required'}</strong>
-          </div>
-          <div className={`readiness-item ${g.status === 'Closed' ? 'ready' : 'pending'}`}>
-            <span>Verification</span>
-            <strong>{g.status === 'Closed' ? 'Completed' : 'Pending'}</strong>
-          </div>
+          <div className={`readiness-item ${actions.filter(a => a.status !== 'Completed').length === 0 ? 'ready' : 'blocked'}`}><span>Action Plan</span><strong>{actions.filter(a => a.status !== 'Completed').length === 0 ? 'Ready' : `${actions.filter(a => a.status !== 'Completed').length} active`}</strong></div>
+          <div className={`readiness-item ${evidence.length > 0 ? 'ready' : 'blocked'}`}><span>Evidence</span><strong>{evidence.length > 0 ? `${evidence.length} file(s)` : 'Required'}</strong></div>
+          <div className={`readiness-item ${g.status === 'Closed' ? 'ready' : 'pending'}`}><span>Verification</span><strong>{g.status === 'Closed' ? 'Completed' : 'Pending'}</strong></div>
         </div>
 
         {g.status === 'Closed' && closure ? (
@@ -820,176 +691,124 @@ export default function GrievanceDetail() {
               <Info label="Verified By" value={closure.verifiedBy || '-'} />
               <Info label="Verification Method" value={closure.verificationMethod || '-'} />
               <Info label="Outcome" value={closure.outcome || '-'} />
-              <Info label="Evidence Reference" value={closure.evidenceReference || '-'} />
+              <Info label="Evidence Reference" value={primaryEvidenceLabel} />
             </div>
             <div className="summary-box"><span>Closure Summary</span><p>{closure.closureSummary || '-'}</p></div>
           </div>
         ) : closure?.reopened ? (
-          <div className="reopen-history">
-            <strong>Previously closed and reopened</strong>
-            <p>{closure.reopenDate || '-'} · {closure.reopenedBy || '-'} · {closure.reopenReason || '-'}</p>
-          </div>
+          <div className="reopen-history"><strong>Previously closed and reopened</strong><p>{closure.reopenDate || '-'} · {closure.reopenedBy || '-'} · {closure.reopenReason || '-'}</p></div>
         ) : (
-          <div className="closure-help">
-            Closure requires: no active action plan, at least one evidence file, verifier name, and closure summary.
-          </div>
+          <div className="closure-help">Closure requires: no active action plan, at least one evidence file, verifier name, and closure summary.</div>
         )}
       </section>
 
       {showUpdateForm && (
-        <Modal onClose={() => setShowUpdateForm(false)} title="Add Case Update" subtitle={`${g.id} — save follow-up activity and update case progress.`}>
+        <Modal onClose={() => !busy && setShowUpdateForm(false)} title="Add Case Update" subtitle={`${g.id} — save follow-up activity and update case progress.`}>
           <form onSubmit={saveUpdate}>
             <div className="form-grid">
               <Field label="Update Date *"><input required type="date" value={form.date} onChange={e=>updateForm('date', e.target.value)} /></Field>
               <Field label="Updated By"><input value={form.updatedBy} onChange={e=>updateForm('updatedBy', e.target.value)} placeholder="Person / team" /></Field>
               <Field label="Update Title *" wide><input required value={form.title} onChange={e=>updateForm('title', e.target.value)} placeholder="e.g. Stakeholder meeting completed" /></Field>
               <Field label="Update / Notes *" wide><textarea required rows="4" value={form.description} onChange={e=>updateForm('description', e.target.value)} placeholder="What happened, result, decision, or follow-up..." /></Field>
-              <Field label="Case Status">
-                <select value={form.status} onChange={e=>updateForm('status', e.target.value)}>
-                  {['Open','In Progress','Verification','Closed'].map(v=><option key={v}>{v}</option>)}
-                </select>
-              </Field>
+              <Field label="Case Status"><select value={form.status} onChange={e=>updateForm('status', e.target.value)}>{['Open','In Progress','Verification','Closed'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Progress %"><input type="number" min="0" max="100" value={form.progress} onChange={e=>updateForm('progress', e.target.value)} /></Field>
               <Field label="Next Action"><input value={form.nextAction} onChange={e=>updateForm('nextAction', e.target.value)} placeholder="Next follow-up action" /></Field>
               <Field label="Due Date"><input type="date" value={form.dueDate} onChange={e=>updateForm('dueDate', e.target.value)} /></Field>
             </div>
-            <StarterWarning />
-            <FormActions onCancel={() => setShowUpdateForm(false)} submit="Save Update" />
+            <SupabaseNote />
+            <FormActions onCancel={() => setShowUpdateForm(false)} submit={busy ? 'Saving…' : 'Save Update'} disabled={busy} />
           </form>
         </Modal>
       )}
 
       {showEditForm && (
-        <Modal onClose={() => setShowEditForm(false)} title="Edit Grievance" subtitle={`${g.id} — update the core grievance record.`} wide>
+        <Modal onClose={() => !busy && setShowEditForm(false)} title="Edit Grievance" subtitle={`${g.id} — update the core grievance record.`} wide>
           <form onSubmit={saveEdit}>
             <div className="form-grid">
               <Field label="Company *"><input required value={editForm.company} onChange={e=>updateEditForm('company', e.target.value)} /></Field>
               <Field label="Site / Location *"><input required value={editForm.location} onChange={e=>updateEditForm('location', e.target.value)} /></Field>
-              <Field label="Category">
-                <select value={editForm.category} onChange={e=>updateEditForm('category', e.target.value)}>
-                  {['Land Conflict','Environmental','Social','Labor','HCV / HCS','Legal / Permit','Other'].map(v=><option key={v}>{v}</option>)}
-                </select>
-              </Field>
+              <Field label="Category"><select value={editForm.category} onChange={e=>updateEditForm('category', e.target.value)}>{['Land Conflict','Environmental','Social','Labor','HCV / HCS','Legal / Permit','Other'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Issue / Title *"><input required value={editForm.title} onChange={e=>updateEditForm('title', e.target.value)} /></Field>
               <Field label="Complaint Source"><input value={editForm.source} onChange={e=>updateEditForm('source', e.target.value)} /></Field>
               <Field label="Opened Date"><input type="date" value={editForm.opened} onChange={e=>updateEditForm('opened', e.target.value)} /></Field>
-              <Field label="Risk Level">
-                <select value={editForm.risk} onChange={e=>updateEditForm('risk', e.target.value)}>{['High','Medium','Low'].map(v=><option key={v}>{v}</option>)}</select>
-              </Field>
-              <Field label="Status">
-                <select value={editForm.status} onChange={e=>updateEditForm('status', e.target.value)}>{['Open','In Progress','Verification','Closed'].map(v=><option key={v}>{v}</option>)}</select>
-              </Field>
+              <Field label="Risk Level"><select value={editForm.risk} onChange={e=>updateEditForm('risk', e.target.value)}>{['Critical','High','Medium','Low'].map(v=><option key={v}>{v}</option>)}</select></Field>
+              <Field label="Status"><select value={editForm.status} onChange={e=>updateEditForm('status', e.target.value)}>{['Open','In Progress','Verification','Closed'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Progress %"><input type="number" min="0" max="100" value={editForm.progress} onChange={e=>updateEditForm('progress', e.target.value)} /></Field>
               <Field label="PIC"><input value={editForm.pic} onChange={e=>updateEditForm('pic', e.target.value)} /></Field>
               <Field label="Next Action"><input value={editForm.nextAction} onChange={e=>updateEditForm('nextAction', e.target.value)} /></Field>
               <Field label="Due Date"><input type="date" value={editForm.dueDate} onChange={e=>updateEditForm('dueDate', e.target.value)} /></Field>
               <Field label="Case Summary" wide><textarea rows="4" value={editForm.summary} onChange={e=>updateEditForm('summary', e.target.value)} /></Field>
             </div>
-            <StarterWarning />
-            <FormActions onCancel={() => setShowEditForm(false)} submit="Save Changes" />
+            <SupabaseNote />
+            <FormActions onCancel={() => setShowEditForm(false)} submit={busy ? 'Saving…' : 'Save Changes'} disabled={busy} />
           </form>
         </Modal>
       )}
 
       {showActionForm && (
-        <Modal onClose={() => setShowActionForm(false)} title={editingActionId ? 'Edit Action Plan' : 'Add Action Plan'} subtitle={`${g.id} — assign an action, PIC, target and progress.`}>
+        <Modal onClose={() => !busy && setShowActionForm(false)} title={editingActionRowId ? 'Edit Action Plan' : 'Add Action Plan'} subtitle={`${g.id} — assign an action, PIC, target and progress.`}>
           <form onSubmit={saveAction}>
             <div className="form-grid">
-              <Field label="Action ID"><input value={actionForm.id} readOnly className="readonly-input" /></Field>
-              <Field label="Priority">
-                <select value={actionForm.priority} onChange={e=>updateActionForm('priority', e.target.value)}>{['High','Medium','Low'].map(v=><option key={v}>{v}</option>)}</select>
-              </Field>
+              <Field label="Action ID"><input value={actionForm.id || 'Auto generated after save'} readOnly className="readonly-input" /></Field>
+              <Field label="Priority"><select value={actionForm.priority} onChange={e=>updateActionForm('priority', e.target.value)}>{['Critical','High','Medium','Low'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Action Description *" wide><textarea required rows="3" value={actionForm.description} onChange={e=>updateActionForm('description', e.target.value)} placeholder="What corrective/follow-up action must be completed?" /></Field>
               <Field label="PIC"><input value={actionForm.pic} onChange={e=>updateActionForm('pic', e.target.value)} placeholder="Person / department" /></Field>
-              <Field label="Target Date"><input type="date" value={actionForm.targetDate} onChange={e=>updateActionForm('targetDate', e.target.value)} /></Field>
-              <Field label="Status">
-                <select value={actionForm.status} onChange={e=>updateActionForm('status', e.target.value)}>{['Open','In Progress','Verification','Completed'].map(v=><option key={v}>{v}</option>)}</select>
-              </Field>
+              <Field label="Target Date"><input type="date" value={actionForm.targetDate || ''} onChange={e=>updateActionForm('targetDate', e.target.value)} /></Field>
+              <Field label="Status"><select value={actionForm.status} onChange={e=>updateActionForm('status', e.target.value)}>{['Open','In Progress','Verification','Completed'].map(v=><option key={v}>{v}</option>)}</select></Field>
               <Field label="Progress %"><input type="number" min="0" max="100" value={actionForm.progress} onChange={e=>updateActionForm('progress', e.target.value)} /></Field>
-              <Field label="Completion Date"><input type="date" value={actionForm.completionDate} onChange={e=>updateActionForm('completionDate', e.target.value)} /></Field>
+              <Field label="Completion Date"><input type="date" value={actionForm.completionDate || ''} onChange={e=>updateActionForm('completionDate', e.target.value)} /></Field>
               <Field label="Remarks" wide><textarea rows="3" value={actionForm.remarks} onChange={e=>updateActionForm('remarks', e.target.value)} placeholder="Result, dependency, blocker, or notes..." /></Field>
             </div>
-            <StarterWarning text="Starter mode: action plans are stored only in this browser. Supabase will make them shared later." />
-            <FormActions onCancel={() => setShowActionForm(false)} submit={editingActionId ? 'Save Action Changes' : 'Save Action'} />
+            <SupabaseNote />
+            <FormActions onCancel={() => setShowActionForm(false)} submit={busy ? 'Saving…' : (editingActionRowId ? 'Save Action Changes' : 'Save Action')} disabled={busy} />
           </form>
         </Modal>
       )}
 
-
       {showEvidenceForm && (
-        <Modal onClose={() => !evidenceBusy && setShowEvidenceForm(false)} title="Upload Evidence" subtitle={`${g.id} — register supporting evidence and attach the file.`} wide>
+        <Modal onClose={() => !evidenceBusy && setShowEvidenceForm(false)} title="Upload Evidence" subtitle={`${g.id} — upload to private Supabase Storage.`} wide>
           <form onSubmit={saveEvidence}>
             <div className="form-grid">
-              <Field label="Evidence ID"><input value={evidenceForm.id} readOnly className="readonly-input" /></Field>
+              <Field label="Evidence ID"><input value="Auto generated after save" readOnly className="readonly-input" /></Field>
               <Field label="Evidence Date *"><input required type="date" value={evidenceForm.evidenceDate} onChange={e=>updateEvidenceForm('evidenceDate', e.target.value)} /></Field>
               <Field label="Evidence Title *" wide><input required value={evidenceForm.title} onChange={e=>updateEvidenceForm('title', e.target.value)} placeholder="e.g. Minutes of stakeholder meeting" /></Field>
-              <Field label="Category">
-                <select value={evidenceForm.category} onChange={e=>updateEvidenceForm('category', e.target.value)}>
-                  {['Meeting Minutes','Photo / Field Evidence','Letter / Correspondence','Map / Spatial Data','Permit / Legal Document','Corrective Action Proof','Investigation Report','Other'].map(v=><option key={v}>{v}</option>)}
-                </select>
-              </Field>
-              <Field label="Linked Action">
-                <select value={evidenceForm.linkedActionId} onChange={e=>updateEvidenceForm('linkedActionId', e.target.value)}>
-                  <option value="">Not linked to an action</option>
-                  {actions.map(action => <option key={action.id} value={action.id}>{action.id} — {action.description.slice(0,60)}</option>)}
-                </select>
-              </Field>
+              <Field label="Category"><select value={evidenceForm.category} onChange={e=>updateEvidenceForm('category', e.target.value)}>{['Meeting Minutes','Photo / Field Evidence','Letter / Correspondence','Map / Spatial Data','Permit / Legal Document','Corrective Action Proof','Investigation Report','Other'].map(v=><option key={v}>{v}</option>)}</select></Field>
+              <Field label="Linked Action"><select value={evidenceForm.linkedActionUuid} onChange={e=>updateEvidenceForm('linkedActionUuid', e.target.value)}><option value="">Not linked to an action</option>{actions.map(action => <option key={action.rowId} value={action.rowId}>{action.id} — {action.description.slice(0,60)}</option>)}</select></Field>
               <Field label="Uploaded By"><input value={evidenceForm.uploadedBy} onChange={e=>updateEvidenceForm('uploadedBy', e.target.value)} placeholder="Person / team" /></Field>
-              <Field label="File *">
-                <input required type="file" onChange={e=>updateEvidenceForm('file', e.target.files?.[0] || null)} />
-                <small className="field-help">Maximum 10 MB in starter mode.</small>
-              </Field>
+              <Field label="File *"><input required type="file" onChange={e=>updateEvidenceForm('file', e.target.files?.[0] || null)} /><small className="field-help">Maximum 10 MB.</small></Field>
               <Field label="Description / Notes" wide><textarea rows="3" value={evidenceForm.description} onChange={e=>updateEvidenceForm('description', e.target.value)} placeholder="What does this evidence prove or support?" /></Field>
             </div>
             {evidenceError ? <div className="form-error">{evidenceError}</div> : null}
-            <StarterWarning text="Starter mode: the selected file stays only in this browser. Supabase Storage will make evidence shared and centrally managed later." />
+            <div className="supabase-note">File will be stored in the private <strong>grievance-evidence</strong> bucket.</div>
             <div className="form-actions">
               <button type="button" className="secondary-btn" disabled={evidenceBusy} onClick={() => setShowEvidenceForm(false)}>Cancel</button>
-              <button type="submit" className="primary-btn" disabled={evidenceBusy}>{evidenceBusy ? 'Saving...' : 'Upload Evidence'}</button>
+              <button type="submit" className="primary-btn" disabled={evidenceBusy}>{evidenceBusy ? 'Uploading…' : 'Upload to Supabase'}</button>
             </div>
           </form>
         </Modal>
       )}
 
       {showClosureForm && (
-        <Modal onClose={() => setShowClosureForm(false)} title="Close Grievance" subtitle={`${g.id} — verify resolution before closing the case.`} wide>
+        <Modal onClose={() => !busy && setShowClosureForm(false)} title="Close Grievance" subtitle={`${g.id} — verify resolution before closing the case.`} wide>
           <form onSubmit={saveClosure}>
-            <div className="closure-rule-box">
-              <strong>Closure checks</strong>
-              <div>• Active actions: {actions.filter(a => a.status !== 'Completed').length}</div>
-              <div>• Evidence files: {evidence.length}</div>
-              <div>All active actions must be completed and at least one evidence file must exist.</div>
-            </div>
+            <div className="closure-rule-box"><strong>Closure checks</strong><div>• Active actions: {actions.filter(a => a.status !== 'Completed').length}</div><div>• Evidence files: {evidence.length}</div><div>All active actions must be completed and at least one evidence file must exist.</div></div>
             <div className="form-grid">
               <Field label="Closure Date *"><input required type="date" value={closureForm.closureDate} onChange={e=>updateClosureForm('closureDate', e.target.value)} /></Field>
               <Field label="Verified By *"><input required value={closureForm.verifiedBy} onChange={e=>updateClosureForm('verifiedBy', e.target.value)} placeholder="Verifier / responsible person" /></Field>
-              <Field label="Verification Method">
-                <select value={closureForm.verificationMethod} onChange={e=>updateClosureForm('verificationMethod', e.target.value)}>
-                  {['Document Review','Field Verification','Stakeholder Confirmation','Management Approval','Other'].map(v=><option key={v}>{v}</option>)}
-                </select>
-              </Field>
-              <Field label="Outcome">
-                <select value={closureForm.outcome} onChange={e=>updateClosureForm('outcome', e.target.value)}>
-                  {['Resolved','Resolved with Monitoring','Partially Resolved','No Further Action'].map(v=><option key={v}>{v}</option>)}
-                </select>
-              </Field>
-              <Field label="Primary Evidence">
-                <select value={closureForm.evidenceReference} onChange={e=>updateClosureForm('evidenceReference', e.target.value)}>
-                  <option value="">Select evidence</option>
-                  {evidence.map(item => <option key={item.id} value={item.id}>{item.id} — {item.title}</option>)}
-                </select>
-              </Field>
+              <Field label="Verification Method"><select value={closureForm.verificationMethod} onChange={e=>updateClosureForm('verificationMethod', e.target.value)}>{['Document Review','Field Verification','Stakeholder Confirmation','Management Approval','Other'].map(v=><option key={v}>{v}</option>)}</select></Field>
+              <Field label="Outcome"><select value={closureForm.outcome} onChange={e=>updateClosureForm('outcome', e.target.value)}>{['Resolved','Resolved with Monitoring','Partially Resolved','No Further Action'].map(v=><option key={v}>{v}</option>)}</select></Field>
+              <Field label="Primary Evidence"><select value={closureForm.evidenceReference} onChange={e=>updateClosureForm('evidenceReference', e.target.value)}><option value="">Select evidence</option>{evidence.map(item => <option key={item.rowId} value={item.rowId}>{item.id} — {item.title}</option>)}</select></Field>
               <Field label="Closure Summary *" wide><textarea required rows="5" value={closureForm.closureSummary} onChange={e=>updateClosureForm('closureSummary', e.target.value)} placeholder="Why can this grievance be considered resolved? Include verification result and final condition." /></Field>
             </div>
             {closureError ? <div className="form-error">{closureError}</div> : null}
-            <StarterWarning text="Starter mode: closure records are stored in this browser only." />
-            <FormActions onCancel={() => setShowClosureForm(false)} submit="Verify & Close Grievance" />
+            <SupabaseNote />
+            <FormActions onCancel={() => setShowClosureForm(false)} submit={busy ? 'Closing…' : 'Verify & Close Grievance'} disabled={busy} />
           </form>
         </Modal>
       )}
 
       {showReopenForm && (
-        <Modal onClose={() => setShowReopenForm(false)} title="Reopen Grievance" subtitle={`${g.id} — reopen a closed case with a documented reason.`} wide>
+        <Modal onClose={() => !busy && setShowReopenForm(false)} title="Reopen Grievance" subtitle={`${g.id} — reopen a closed case with a documented reason.`} wide>
           <form onSubmit={saveReopen}>
             <div className="form-grid">
               <Field label="Reopen Date *"><input required type="date" value={reopenForm.reopenDate} onChange={e=>updateReopenForm('reopenDate', e.target.value)} /></Field>
@@ -1000,8 +819,8 @@ export default function GrievanceDetail() {
               <Field label="Next Action" wide><input value={reopenForm.nextAction} onChange={e=>updateReopenForm('nextAction', e.target.value)} placeholder="What must happen next?" /></Field>
             </div>
             {closureError ? <div className="form-error">{closureError}</div> : null}
-            <StarterWarning text="Reopening keeps the previous closure record in the case history." />
-            <FormActions onCancel={() => setShowReopenForm(false)} submit="Reopen Case" />
+            <SupabaseNote text="Reopening updates the shared Supabase record and keeps the previous closure record." />
+            <FormActions onCancel={() => setShowReopenForm(false)} submit={busy ? 'Reopening…' : 'Reopen Case'} disabled={busy} />
           </form>
         </Modal>
       )}
@@ -1009,80 +828,67 @@ export default function GrievanceDetail() {
   );
 }
 
-function Info({label,value}) {
-  return <div className="info"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function Field({ label, children, wide = false }) {
-  return <label className={`form-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>;
-}
+function Info({label,value}) { return <div className="info"><span>{label}</span><strong>{value}</strong></div>; }
+function Field({ label, children, wide = false }) { return <label className={`form-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>; }
 
 function Modal({ onClose, title, subtitle, children, wide = false }) {
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className={`modal-card ${wide ? 'wide-modal' : 'update-modal'}`} onMouseDown={e => e.stopPropagation()}>
-        <div className="modal-head">
-          <div><h2>{title}</h2><p>{subtitle}</p></div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">×</button>
-        </div>
+        <div className="modal-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button type="button" className="icon-btn" onClick={onClose} aria-label="Close">×</button></div>
         {children}
       </div>
     </div>
   );
 }
 
-function FormActions({ onCancel, submit }) {
-  return (
-    <div className="form-actions">
-      <button type="button" className="secondary-btn" onClick={onCancel}>Cancel</button>
-      <button type="submit" className="primary-btn">{submit}</button>
-    </div>
-  );
+function FormActions({ onCancel, submit, disabled = false }) {
+  return <div className="form-actions"><button type="button" className="secondary-btn" onClick={onCancel} disabled={disabled}>Cancel</button><button type="submit" className="primary-btn" disabled={disabled}>{submit}</button></div>;
 }
 
-function StarterWarning({ text = 'Starter mode: changes are saved in this browser only. Supabase will make them shared later.' }) {
-  return <div className="starter-warning">{text}</div>;
+function SupabaseNote({ text = 'Supabase mode: changes are saved to the shared database.' }) {
+  return <div className="supabase-note">{text}</div>;
 }
 
-function MiniStat({ label, value, danger = false }) {
-  return <div className={`mini-stat ${danger ? 'danger' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
+function MiniStat({ label, value, danger = false }) { return <div className={`mini-stat ${danger ? 'danger' : ''}`}><span>{label}</span><strong>{value}</strong></div>; }
+
+function mapDbCase(row) {
+  return {
+    rowId: row.id, id: row.case_id, company: row.company || '', location: row.site || '', category: row.category || '',
+    title: row.issue_title || '', source: row.complaint_source || '', opened: row.opened_date || '', risk: row.risk_level || 'Medium',
+    status: row.status || 'Open', progress: Number(row.progress || 0), pic: row.pic || '', nextAction: row.next_action || '', dueDate: row.due_date || '', summary: row.case_summary || '',
+  };
 }
 
-function safeParse(value, fallback) {
-  try {
-    const parsed = JSON.parse(value || '');
-    return parsed && typeof parsed === 'object' ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
+function mapDbUpdate(row) {
+  return { rowId: row.id, id: row.update_id, date: row.update_date || '', updatedBy: row.updated_by || '', title: row.update_title || '', description: row.notes || '' };
 }
 
-function persistMapItem(storageKey, itemId, value) {
-  const current = safeParse(localStorage.getItem(storageKey), {});
-  localStorage.setItem(storageKey, JSON.stringify({ ...current, [itemId]: value }));
+function mapDbAction(row) {
+  return {
+    rowId: row.id, id: row.action_id, description: row.action_description || '', pic: row.pic || '', priority: row.priority || 'Medium',
+    targetDate: row.target_date || '', status: row.status || 'Open', progress: Number(row.progress || 0), completionDate: row.completion_date || '', remarks: row.remarks || '',
+  };
 }
 
-function clampProgress(value) {
-  return Math.min(100, Math.max(0, Number(value) || 0));
+function mapDbEvidence(row) {
+  return {
+    rowId: row.id, id: row.evidence_id, title: row.evidence_title || '', category: row.category || '', evidenceDate: row.evidence_date || '',
+    uploadedBy: row.uploaded_by || '', linkedActionUuid: row.action_id || '', description: row.description || '', fileName: row.file_name || '',
+    storagePath: row.storage_path || '', fileSize: Number(row.file_size || 0), fileType: row.mime_type || '',
+  };
 }
 
-function createActionId(actions) {
-  const max = actions.reduce((highest, item) => {
-    const n = Number(String(item.id || '').replace(/\D/g, ''));
-    return Number.isFinite(n) ? Math.max(highest, n) : highest;
-  }, 0);
-  return `ACT-${String(max + 1).padStart(3, '0')}`;
+function mapDbClosure(row) {
+  return {
+    rowId: row.id, id: row.closure_id, closureDate: row.closure_date || '', verifiedBy: row.verified_by || '', verificationMethod: row.verification_method || '',
+    outcome: row.outcome || '', evidenceReference: row.primary_evidence_id || '', closureSummary: row.closure_summary || '', reopened: Boolean(row.reopened_at),
+    reopenDate: row.reopened_at || '', reopenedBy: row.reopened_by || '', reopenReason: row.reopen_reason || '', reopenDueDate: row.reopen_due_date || '', reopenNextAction: row.reopen_next_action || '',
+  };
 }
 
-
-
-function createEvidenceId(items) {
-  const max = items.reduce((highest, item) => {
-    const n = Number(String(item.id || '').replace(/\D/g, ''));
-    return Number.isFinite(n) ? Math.max(highest, n) : highest;
-  }, 0);
-  return `EVD-${String(max + 1).padStart(3, '0')}`;
-}
+function clampProgress(value) { return Math.min(100, Math.max(0, Number(value) || 0)); }
+function sanitizeFileName(name) { return String(name || 'evidence').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-140); }
 
 function formatBytes(bytes) {
   const n = Number(bytes || 0);
@@ -1099,68 +905,10 @@ function formatShortDate(value) {
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-function openEvidenceDb() {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB is not supported'));
-      return;
-    }
-    const request = indexedDB.open(EVIDENCE_DB, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(EVIDENCE_STORE)) {
-        db.createObjectStore(EVIDENCE_STORE, { keyPath: 'storageId' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function putEvidenceBlob(storageId, file) {
-  const db = await openEvidenceDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(EVIDENCE_STORE, 'readwrite');
-    tx.objectStore(EVIDENCE_STORE).put({ storageId, blob: file, fileName: file.name, fileType: file.type, savedAt: new Date().toISOString() });
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-
-async function getEvidenceBlob(storageId) {
-  if (!storageId) return null;
-  const db = await openEvidenceDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(EVIDENCE_STORE, 'readonly');
-    const request = tx.objectStore(EVIDENCE_STORE).get(storageId);
-    request.onsuccess = () => resolve(request.result?.blob || null);
-    request.onerror = () => reject(request.error);
-    tx.oncomplete = () => db.close();
-  });
-}
-
-async function deleteEvidenceBlob(storageId) {
-  if (!storageId) return;
-  const db = await openEvidenceDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(EVIDENCE_STORE, 'readwrite');
-    tx.objectStore(EVIDENCE_STORE).delete(storageId);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-
-function normalizeInputDate(value) {
-  if (!value) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
-}
-
 function formatDisplayDate(dateValue) {
   if (!dateValue) return '';
   const date = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateValue;
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
@@ -1168,8 +916,7 @@ function dayDifference(dateValue) {
   if (!dateValue) return null;
   const target = new Date(`${dateValue}T23:59:59`);
   if (Number.isNaN(target.getTime())) return null;
-  const now = new Date();
-  return Math.ceil((target.getTime() - now.getTime()) / 86400000);
+  return Math.ceil((target.getTime() - Date.now()) / 86400000);
 }
 
 function getDueState(action) {
@@ -1181,9 +928,9 @@ function getDueState(action) {
   return 'On Track';
 }
 
-function getCaseDueState(g) {
-  if (g.status === 'Closed') return { label: 'Closed', className: 'completed' };
-  const diff = dayDifference(g.dueDate);
+function getCaseDueState(grievance) {
+  if (grievance.status === 'Closed') return { label: 'Closed', className: 'completed' };
+  const diff = dayDifference(grievance.dueDate);
   if (diff === null) return { label: 'No Due Date', className: 'no-due-date' };
   if (diff < 0) return { label: 'Overdue', className: 'overdue' };
   if (diff <= 14) return { label: 'Due Soon', className: 'due-soon' };

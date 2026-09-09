@@ -2,10 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { grievances as seedGrievances } from '../../data/grievances';
-
-const STORAGE_KEY = 'sm_custom_grievances';
-const OVERRIDES_KEY = 'sm_grievance_overrides';
+import { supabase, getSupabaseConfigError } from '../../lib/supabaseClient';
 
 const emptyForm = {
   company: '',
@@ -24,34 +21,44 @@ const emptyForm = {
 };
 
 export default function GrievanceTracker() {
-  const [customGrievances, setCustomGrievances] = useState([]);
-  const [overrides, setOverrides] = useState({});
+  const [grievances, setGrievances] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
   const [risk, setRisk] = useState('All');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      if (Array.isArray(saved)) setCustomGrievances(saved);
-    } catch {
-      setCustomGrievances([]);
-    }
-
-    try {
-      const savedOverrides = JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}');
-      if (savedOverrides && typeof savedOverrides === 'object') setOverrides(savedOverrides);
-    } catch {
-      setOverrides({});
-    }
+    loadGrievances();
   }, []);
 
-  const grievances = useMemo(
-    () => [...customGrievances, ...seedGrievances].map(g => ({ ...g, ...(overrides[g.id] || {}) })),
-    [customGrievances, overrides]
-  );
+  async function loadGrievances() {
+    const configError = getSupabaseConfigError();
+    if (configError || !supabase) {
+      setError(configError || 'Supabase is not configured.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    const { data, error: queryError } = await supabase
+      .from('grievances')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (queryError) {
+      setError(queryError.message);
+      setLoading(false);
+      return;
+    }
+
+    setGrievances((data || []).map(mapDbCase));
+    setLoading(false);
+  }
 
   const filtered = useMemo(() => grievances.filter(g => {
     const text = `${g.id} ${g.company} ${g.location} ${g.category} ${g.title}`.toLowerCase();
@@ -64,34 +71,58 @@ export default function GrievanceTracker() {
     setForm(prev => ({ ...prev, [field]: value }));
   }
 
-  function createCaseId() {
-    const max = grievances.reduce((highest, item) => {
-      const n = Number(String(item.id || '').replace(/\D/g, ''));
-      return Number.isFinite(n) ? Math.max(highest, n) : highest;
-    }, 0);
-    return `GRV-${String(max + 1).padStart(3, '0')}`;
-  }
-
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
+    if (!supabase) return;
 
-    const id = createCaseId();
-    const opened = form.opened || new Date().toISOString().slice(0, 10);
-    const newCase = {
-      ...form,
-      id,
-      opened,
-      progress: Number(form.progress) || 0,
-      timeline: [
-        [formatDisplayDate(opened), 'Complaint Received', 'Grievance registered in starter mode.'],
-      ],
+    setSaving(true);
+    setError('');
+    const opened = form.opened || todayISO();
+
+    const payload = {
+      company: form.company.trim(),
+      site: form.location.trim(),
+      category: form.category,
+      issue_title: form.title.trim(),
+      complaint_source: form.source.trim() || null,
+      opened_date: opened,
+      risk_level: form.risk,
+      status: form.status,
+      progress: clampProgress(form.progress),
+      pic: form.pic.trim() || null,
+      next_action: form.nextAction.trim() || null,
+      due_date: form.dueDate || null,
+      case_summary: form.summary.trim() || null,
     };
 
-    const updated = [newCase, ...customGrievances];
-    setCustomGrievances(updated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    const { data: inserted, error: insertError } = await supabase
+      .from('grievances')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (insertError) {
+      setError(insertError.message);
+      setSaving(false);
+      return;
+    }
+
+    // Create the first timeline record. If it fails, the grievance itself remains saved.
+    await supabase.from('grievance_updates').insert({
+      grievance_id: inserted.id,
+      update_date: opened,
+      update_title: 'Complaint Received',
+      notes: 'Grievance registered in System Monitoring.',
+      case_status: form.status,
+      progress: clampProgress(form.progress),
+      next_action: form.nextAction.trim() || null,
+      due_date: form.dueDate || null,
+    });
+
     setForm(emptyForm);
     setShowForm(false);
+    setSaving(false);
+    await loadGrievances();
   }
 
   return (
@@ -104,11 +135,13 @@ export default function GrievanceTracker() {
         <button className="primary-btn" onClick={() => setShowForm(true)}>+ Add Grievance</button>
       </div>
 
+      {error ? <div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div> : <div className="sync-success">● Supabase mode — data is shared across devices</div>}
+
       <section className="kpi-grid compact">
-        <KPI label="Total Cases" value={grievances.length} />
-        <KPI label="Open / Active" value={grievances.filter(g=>g.status!=='Closed').length} />
-        <KPI label="High Risk" value={grievances.filter(g=>g.risk==='High' && g.status!=='Closed').length} />
-        <KPI label="Closed" value={grievances.filter(g=>g.status==='Closed').length} />
+        <KPI label="Total Cases" value={loading ? '…' : grievances.length} />
+        <KPI label="Open / Active" value={loading ? '…' : grievances.filter(g=>g.status!=='Closed').length} />
+        <KPI label="High / Critical Risk" value={loading ? '…' : grievances.filter(g=>['High','Critical'].includes(g.risk) && g.status!=='Closed').length} />
+        <KPI label="Closed" value={loading ? '…' : grievances.filter(g=>g.status==='Closed').length} />
       </section>
 
       <section className="panel">
@@ -118,41 +151,45 @@ export default function GrievanceTracker() {
             {['All','Open','In Progress','Verification','Closed'].map(v=><option key={v}>{v}</option>)}
           </select>
           <select value={risk} onChange={e=>setRisk(e.target.value)}>
-            {['All','High','Medium','Low'].map(v=><option key={v}>{v}</option>)}
+            {['All','Critical','High','Medium','Low'].map(v=><option key={v}>{v}</option>)}
           </select>
-          <div className="result-count">{filtered.length} case(s)</div>
+          <div className="result-count">{loading ? 'Loading…' : `${filtered.length} case(s)`}</div>
         </div>
 
         <div className="table-wrap">
           <table>
             <thead><tr><th>Case ID</th><th>Company / Site</th><th>Issue</th><th>Risk</th><th>Status</th><th>Progress</th><th>Due Date</th><th></th></tr></thead>
             <tbody>
-              {filtered.map(g => (
+              {loading ? (
+                <tr><td colSpan="8" className="empty-cell">Loading grievance data from Supabase…</td></tr>
+              ) : filtered.length ? filtered.map(g => (
                 <tr key={g.id}>
                   <td><strong>{g.id}</strong><div className="muted">{g.opened}</div></td>
                   <td>{g.company}<div className="muted">{g.location}</div></td>
                   <td>{g.title}<div className="muted">{g.category}</div></td>
-                  <td><span className={`badge ${g.risk.toLowerCase()}`}>{g.risk}</span></td>
+                  <td><span className={`badge ${String(g.risk).toLowerCase()}`}>{g.risk}</span></td>
                   <td><span className="status-pill">{g.status}</span></td>
                   <td><div className="progress"><div style={{width:`${g.progress}%`}}></div></div><div className="muted">{g.progress}%</div></td>
                   <td>{g.dueDate || '-'}</td>
                   <td><Link href={`/grievances/${g.id}`} className="view-btn">View</Link></td>
                 </tr>
-              ))}
+              )) : (
+                <tr><td colSpan="8" className="empty-cell">No grievance found. Use + Add Grievance to create a dummy Supabase case.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </section>
 
       {showForm && (
-        <div className="modal-backdrop" onMouseDown={() => setShowForm(false)}>
+        <div className="modal-backdrop" onMouseDown={() => !saving && setShowForm(false)}>
           <div className="modal-card" onMouseDown={e => e.stopPropagation()}>
             <div className="modal-head">
               <div>
                 <h2>Add Grievance</h2>
-                <p>Starter mode — data is saved only in this browser.</p>
+                <p>Supabase mode — this record will be shared across devices.</p>
               </div>
-              <button className="icon-btn" onClick={() => setShowForm(false)} aria-label="Close">×</button>
+              <button className="icon-btn" onClick={() => setShowForm(false)} aria-label="Close" disabled={saving}>×</button>
             </div>
 
             <form onSubmit={handleSubmit}>
@@ -169,7 +206,7 @@ export default function GrievanceTracker() {
                 <Field label="Opened Date"><input type="date" value={form.opened} onChange={e=>updateForm('opened', e.target.value)} /></Field>
                 <Field label="Risk Level">
                   <select value={form.risk} onChange={e=>updateForm('risk', e.target.value)}>
-                    {['High','Medium','Low'].map(v=><option key={v}>{v}</option>)}
+                    {['Critical','High','Medium','Low'].map(v=><option key={v}>{v}</option>)}
                   </select>
                 </Field>
                 <Field label="Status">
@@ -185,8 +222,8 @@ export default function GrievanceTracker() {
               </div>
 
               <div className="form-actions">
-                <button type="button" className="secondary-btn" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" className="primary-btn">Save Grievance</button>
+                <button type="button" className="secondary-btn" onClick={() => setShowForm(false)} disabled={saving}>Cancel</button>
+                <button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving…' : 'Save to Supabase'}</button>
               </div>
             </form>
           </div>
@@ -204,8 +241,30 @@ function Field({ label, children, wide = false }) {
   return <label className={`form-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>;
 }
 
-function formatDisplayDate(dateValue) {
-  if (!dateValue) return '';
-  const date = new Date(`${dateValue}T00:00:00`);
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+function mapDbCase(row) {
+  return {
+    rowId: row.id,
+    id: row.case_id,
+    company: row.company || '',
+    location: row.site || '',
+    category: row.category || '',
+    title: row.issue_title || '',
+    source: row.complaint_source || '',
+    opened: row.opened_date || '',
+    risk: row.risk_level || 'Medium',
+    status: row.status || 'Open',
+    progress: Number(row.progress || 0),
+    pic: row.pic || '',
+    nextAction: row.next_action || '',
+    dueDate: row.due_date || '',
+    summary: row.case_summary || '',
+  };
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function clampProgress(value) {
+  return Math.min(100, Math.max(0, Number(value) || 0));
 }

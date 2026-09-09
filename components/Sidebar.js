@@ -28,8 +28,8 @@ export default function Sidebar() {
         ))}
       </nav>
       <div className="sidebar-note">
-        <strong>Starter Mode</strong>
-        <span>Dummy data only. Ready for Supabase later.</span>
+        <strong>Supabase Mode</strong>
+        <span>Shared database & private evidence storage.</span>
       </div>
     </aside>
   );

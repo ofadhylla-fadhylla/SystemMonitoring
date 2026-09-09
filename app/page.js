@@ -2,55 +2,73 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { grievances as seedGrievances } from '../data/grievances';
-
-const STORAGE_KEY = 'sm_custom_grievances';
-const OVERRIDES_KEY = 'sm_grievance_overrides';
+import { supabase, getSupabaseConfigError } from '../lib/supabaseClient';
 
 export default function Dashboard() {
-  const [customGrievances, setCustomGrievances] = useState([]);
-  const [overrides, setOverrides] = useState({});
+  const [grievances, setGrievances] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      if (Array.isArray(saved)) setCustomGrievances(saved);
-    } catch {
-      setCustomGrievances([]);
+    let active = true;
+
+    async function loadDashboard() {
+      const configError = getSupabaseConfigError();
+      if (configError || !supabase) {
+        if (active) {
+          setError(configError || 'Supabase is not configured.');
+          setLoading(false);
+        }
+        return;
+      }
+
+      const { data, error: queryError } = await supabase
+        .from('grievances')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!active) return;
+      if (queryError) {
+        setError(queryError.message);
+        setLoading(false);
+        return;
+      }
+
+      setGrievances((data || []).map(mapDbCase));
+      setLoading(false);
     }
 
-    try {
-      const savedOverrides = JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}');
-      if (savedOverrides && typeof savedOverrides === 'object') setOverrides(savedOverrides);
-    } catch {
-      setOverrides({});
-    }
+    loadDashboard();
+    return () => { active = false; };
   }, []);
 
-  const grievances = useMemo(
-    () => [...customGrievances, ...seedGrievances].map(g => ({ ...g, ...(overrides[g.id] || {}) })),
-    [customGrievances, overrides]
-  );
-
-  const open = grievances.filter(g => g.status !== 'Closed').length;
-  const high = grievances.filter(g => g.risk === 'High' && g.status !== 'Closed').length;
-  const closed = grievances.filter(g => g.status === 'Closed').length;
-  const avg = grievances.length ? Math.round(grievances.reduce((s, g) => s + Number(g.progress || 0), 0) / grievances.length) : 0;
+  const stats = useMemo(() => {
+    const open = grievances.filter(g => g.status !== 'Closed').length;
+    const high = grievances.filter(g => ['High', 'Critical'].includes(g.risk) && g.status !== 'Closed').length;
+    const closed = grievances.filter(g => g.status === 'Closed').length;
+    const avg = grievances.length
+      ? Math.round(grievances.reduce((sum, g) => sum + Number(g.progress || 0), 0) / grievances.length)
+      : 0;
+    return { open, high, closed, avg };
+  }, [grievances]);
 
   return (
     <div className="page-wrap">
       <div className="page-heading">
         <div>
           <h1>Executive Dashboard</h1>
-          <p>Starter monitoring workspace — replace with validated data later.</p>
+          <p>Supabase-backed monitoring workspace — shared across devices.</p>
         </div>
       </div>
 
+      {error ? <div className="sync-error"><strong>Supabase connection issue</strong><span>{error}</span></div> : null}
+      {!error && !loading ? <div className="sync-success">● Supabase connected — live shared data</div> : null}
+
       <section className="kpi-grid">
-        <KPI label="Open Grievances" value={open} hint="Need follow-up" />
-        <KPI label="High Risk" value={high} hint="Priority cases" />
-        <KPI label="Closed" value={closed} hint="Verified closure" />
-        <KPI label="Average Progress" value={`${avg}%`} hint="Across all cases" />
+        <KPI label="Open Grievances" value={loading ? '…' : stats.open} hint="Need follow-up" />
+        <KPI label="High / Critical Risk" value={loading ? '…' : stats.high} hint="Priority cases" />
+        <KPI label="Closed" value={loading ? '…' : stats.closed} hint="Verified closure" />
+        <KPI label="Average Progress" value={loading ? '…' : `${stats.avg}%`} hint="Across all cases" />
       </section>
 
       <section className="two-col">
@@ -58,7 +76,7 @@ export default function Dashboard() {
           <div className="panel-head">
             <div>
               <h2>Recent Grievances</h2>
-              <p>Starter cases</p>
+              <p>Latest cases from Supabase</p>
             </div>
             <Link href="/grievances" className="text-link">View tracker →</Link>
           </div>
@@ -66,15 +84,21 @@ export default function Dashboard() {
             <table>
               <thead><tr><th>Case</th><th>Company</th><th>Risk</th><th>Status</th><th>Progress</th></tr></thead>
               <tbody>
-                {grievances.slice(0, 4).map(g => (
-                  <tr key={g.id}>
-                    <td><Link className="case-link" href={`/grievances/${g.id}`}>{g.id}</Link></td>
-                    <td>{g.company}</td>
-                    <td><span className={`badge ${g.risk.toLowerCase()}`}>{g.risk}</span></td>
-                    <td>{g.status}</td>
-                    <td>{g.progress}%</td>
-                  </tr>
-                ))}
+                {loading ? (
+                  <tr><td colSpan="5" className="empty-cell">Loading Supabase data…</td></tr>
+                ) : grievances.length ? (
+                  grievances.slice(0, 5).map(g => (
+                    <tr key={g.id}>
+                      <td><Link className="case-link" href={`/grievances/${g.id}`}>{g.id}</Link></td>
+                      <td>{g.company}</td>
+                      <td><span className={`badge ${String(g.risk).toLowerCase()}`}>{g.risk}</span></td>
+                      <td>{g.status}</td>
+                      <td>{g.progress}%</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr><td colSpan="5" className="empty-cell">No Supabase grievance yet. Add a dummy case from Grievance Tracker.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -84,7 +108,7 @@ export default function Dashboard() {
           <div className="panel-head"><div><h2>Workspace Modules</h2><p>Foundation for the full system</p></div></div>
           <div className="module-list">
             {['Grievance Tracker','Action Monitoring','Audit Monitoring','Certificate Expiry','Document Monitoring','EUDR / NDPE','Buyer Requirement','Training Monitoring'].map((m,i)=>(
-              <div className="module-row" key={m}><span>{String(i+1).padStart(2,'0')}</span><strong>{m}</strong><em>{i === 0 ? 'ACTIVE' : 'READY'}</em></div>
+              <div className="module-row" key={m}><span>{String(i+1).padStart(2,'0')}</span><strong>{m}</strong><em>{i === 0 ? 'SUPABASE' : 'READY'}</em></div>
             ))}
           </div>
         </div>
@@ -95,4 +119,24 @@ export default function Dashboard() {
 
 function KPI({label, value, hint}) {
   return <div className="kpi-card"><span>{label}</span><strong>{value}</strong><small>{hint}</small></div>;
+}
+
+function mapDbCase(row) {
+  return {
+    rowId: row.id,
+    id: row.case_id,
+    company: row.company || '',
+    location: row.site || '',
+    category: row.category || '',
+    title: row.issue_title || '',
+    source: row.complaint_source || '',
+    opened: row.opened_date || '',
+    risk: row.risk_level || 'Medium',
+    status: row.status || 'Open',
+    progress: Number(row.progress || 0),
+    pic: row.pic || '',
+    nextAction: row.next_action || '',
+    dueDate: row.due_date || '',
+    summary: row.case_summary || '',
+  };
 }
