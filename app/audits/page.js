@@ -46,10 +46,22 @@ export default function AuditMonitoring() {
   const certMap = useMemo(() => Object.fromEntries(certifications.map(c=>[c.id,c])), [certifications]);
 
   const calendarEvents = useMemo(() => {
-    const auditEvents = audits.map(a => ({
-      key: `audit-${a.id}`, kind: 'audit', date: a.start_date, endDate: a.end_date, title: a.title,
-      companyId: a.company_id, subtitle: `${a.audit_type} · ${a.status}`, row: a
-    }));
+    // Multi-day audits are expanded so the event appears on every day
+    // from start_date through end_date (inclusive).
+    const auditEvents = audits.flatMap(a => {
+      const dates = expandDateRange(a.start_date, a.end_date || a.start_date);
+      return dates.map((date, index) => ({
+        key: `audit-${a.id}-${date}`,
+        kind: 'audit',
+        date,
+        endDate: a.end_date,
+        title: a.title,
+        companyId: a.company_id,
+        subtitle: `${a.audit_type} · ${a.status}`,
+        row: a,
+        rangePosition: dates.length === 1 ? 'single' : index === 0 ? 'start' : index === dates.length - 1 ? 'end' : 'middle',
+      }));
+    });
     const expiryEvents = certifications.filter(c=>c.valid_until).map(c => ({
       key: `expiry-${c.id}`, kind: 'expiry', date: c.valid_until, title: `${c.standard} expires`, companyId: c.company_id,
       subtitle: c.certificate_number || 'Certificate expiry', row: c
@@ -218,6 +230,32 @@ export default function AuditMonitoring() {
       </div></div>}
     </div>
   );
+}
+
+
+function expandDateRange(startISO, endISO) {
+  if (!startISO) return [];
+  const start = parseISODate(startISO);
+  const end = parseISODate(endISO || startISO);
+  if (!start || !end) return [startISO];
+
+  // If an invalid end date is earlier than the start, show the start date only.
+  if (end < start) return [startISO];
+
+  const result = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  while (cursor <= end) {
+    result.push(isoLocal(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return result;
+}
+
+function parseISODate(value) {
+  if (!value) return null;
+  const [y, m, d] = String(value).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
 }
 
 function buildCalendar(month) {

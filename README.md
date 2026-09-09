@@ -1,29 +1,5 @@
-# System Monitoring Starter
+# V8.1 Audit Calendar Range Fix
 
-A dummy-data starter shell for a sustainability/compliance monitoring dashboard with a working Grievance Tracker.
+Fixes multi-day audits so an audit with Start Date 14 Sep and End Date 18 Sep appears on 14, 15, 16, 17 and 18 Sep in the calendar.
 
-## Run locally
-
-1. Install Node.js 20.9+.
-2. Open this folder in Terminal / PowerShell.
-3. Run:
-
-```bash
-npm install
-npm run dev
-```
-
-4. Open http://localhost:3000
-
-## Included
-- Executive dashboard
-- Grievance Tracker with search/filter
-- Grievance detail page
-- Case timeline
-- Risk/status/progress
-- Placeholder modules for actions, audit, certificates and documents
-- Responsive layout
-- Dummy data only
-
-## Next stage
-Connect Supabase for authentication, PostgreSQL data, Row Level Security, and Storage evidence uploads, then deploy to Vercel.
+Upload the `app` folder to the existing GitHub repository and commit. Vercel will redeploy automatically.
