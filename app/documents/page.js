@@ -29,14 +29,12 @@ export default function NDPEImplementation() {
   const [items, setItems] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [sites, setSites] = useState([]);
-  const [grievances, setGrievances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ...emptyForm, lastUpdateDate: todayISO() });
   const [previewItem, setPreviewItem] = useState(null);
-  const [reportDate, setReportDate] = useState(todayISO());
   const [search, setSearch] = useState('');
   const [companyFilter, setCompanyFilter] = useState('All');
   const [siteFilter, setSiteFilter] = useState('All');
@@ -49,18 +47,16 @@ export default function NDPEImplementation() {
     const configError = getSupabaseConfigError();
     if (configError || !supabase) { setError(configError || 'Supabase is not configured.'); setLoading(false); return; }
     setLoading(true); setError('');
-    const [nRes, cRes, sRes, gRes] = await Promise.all([
+    const [nRes, cRes, sRes] = await Promise.all([
       supabase.from('ndpe_implementation').select('*').order('created_at', { ascending: false }),
       supabase.from('companies').select('*').order('company_code'),
       supabase.from('sites').select('*').order('site_name'),
-      supabase.from('grievances').select('id,case_id,company,site,issue_title,opened_date,status').order('opened_date', { ascending: false }),
     ]);
-    const anyError = nRes.error || cRes.error || sRes.error || gRes.error;
+    const anyError = nRes.error || cRes.error || sRes.error;
     if (anyError) setError(anyError.message);
     setItems((nRes.data || []).map(mapRow));
     setCompanies(cRes.data || []);
     setSites(sRes.data || []);
-    setGrievances(gRes.data || []);
     setLoading(false);
   }
 
@@ -172,64 +168,14 @@ export default function NDPEImplementation() {
     alert('Bilingual resume copied.');
   }
 
-  async function downloadWeeklyReport() {
-    if (!filtered.length) { alert('No NDPE records in the current filter.'); return; }
-    const {
-      Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun,
-      WidthType, AlignmentType, ShadingType, BorderStyle,
-    } = await import('docx');
-
-    const headerFill = 'D9E7F5';
-    const border = { style: BorderStyle.SINGLE, size: 1, color: '7F8C8D' };
-    const borders = { top: border, bottom: border, left: border, right: border };
-    const children = [
-      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'WEEKLY PROGRESS REPORT – NDPE IMPLEMENTATION', bold: true, size: 28 })] }),
-      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${formatDate(reportDate)} | Laporan Progress Mingguan – NDPE Implementation`, bold: true, size: 21 })] }),
-      new Paragraph({ text: '' }),
-    ];
-
-    let sectionNo = 1;
-    for (const std of STANDARDS) {
-      const rows = filtered.filter(i => i.relatedStandards.includes(std));
-      if (!rows.length) continue;
-      children.push(new Paragraph({ children: [new TextRun({ text: `${sectionNo}. ${std}`, bold: true, size: 24 })] }));
-      children.push(makeProgressTable(rows, std, companyMap, siteMap, { Table, TableCell, TableRow, Paragraph, TextRun, WidthType, ShadingType, borders, headerFill }));
-      children.push(new Paragraph({ text: '' }));
-      sectionNo++;
-    }
-
-    // Mirrors the weekly System & Monitoring report by adding a grievance section for the report week.
-    const end = new Date(`${reportDate}T00:00:00`);
-    const start = new Date(end); start.setDate(start.getDate() - 6);
-    const newGrievances = grievances.filter(g => {
-      if (!g.opened_date) return false;
-      const d = new Date(`${g.opened_date}T00:00:00`);
-      return d >= start && d <= end;
-    });
-    children.push(new Paragraph({ children: [new TextRun({ text: `${sectionNo}. Grievance`, bold: true, size: 24 })] }));
-    children.push(makeGrievanceTable(newGrievances, { Table, TableCell, TableRow, Paragraph, TextRun, WidthType, ShadingType, borders, headerFill }));
-    children.push(new Paragraph({ text: '' }));
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'KPN Plantations – Sustainability HO | System & Monitoring', size: 16, color: '5B6770' })] }));
-
-    const doc = new Document({ sections: [{ properties: {}, children }] });
-    const blob = await Packer.toBlob(doc);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `Weekly_Progress_NDPE_${reportDate}.docx`; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
-  }
 
   return <div className="page-wrap">
     <div className="page-heading">
       <div><h1>NDPE Implementation</h1><p>Track No Deforestation, No Peat and No Exploitation implementation and map each item to ISPO, ISCC, INS and EUDR.</p></div>
-      <div className="detail-actions"><button className="secondary-btn" onClick={downloadWeeklyReport}>Generate Weekly Report</button><button className="primary-btn" onClick={openNew}>+ Add NDPE Item</button></div>
+      <div className="detail-actions"><button className="primary-btn" onClick={openNew}>+ Add NDPE Item</button></div>
     </div>
     {error ? <div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div> : <div className="sync-success">● NDPE Implementation is connected to Supabase</div>}
 
-    <section className="panel ndpe-report-toolbar">
-      <div><strong>Weekly report date</strong><span>The Word report follows the bilingual table structure used in the System & Monitoring weekly progress report.</span></div>
-      <input type="date" value={reportDate} onChange={e=>setReportDate(e.target.value)} />
-    </section>
 
     <section className="kpi-grid ndpe-kpis">
       <KPI label="NDPE Items" value={loading?'…':stats.total}/><KPI label="Open / Active" value={loading?'…':stats.open}/><KPI label="Overdue" value={loading?'…':stats.overdue}/><KPI label="Average Progress" value={loading?'…':`${stats.avg}%`}/><KPI label="EUDR Related" value={loading?'…':stats.eudr}/>
@@ -279,16 +225,16 @@ export default function NDPEImplementation() {
         <label className="form-field"><span>Target Date</span><input type="date" value={form.targetDate} onChange={e=>updateForm('targetDate',e.target.value)} /></label>
         <label className="form-field"><span>Last Update Date</span><input type="date" value={form.lastUpdateDate} onChange={e=>updateForm('lastUpdateDate',e.target.value)} /></label>
         <div className="form-field wide"><span>Related to</span><div className="standard-checkboxes">{STANDARDS.map(std=><label key={std}><input type="checkbox" checked={form.relatedStandards.includes(std)} onChange={()=>toggleStandard(std)} /><span>{std}</span></label>)}</div></div>
-        <div className="form-field wide resume-helper"><div><span>Weekly Report Resume</span><small>Use Auto Generate as a starting point, then edit the bilingual wording if needed.</small></div><button type="button" className="secondary-btn" onClick={autoFillResume}>Auto Generate Bilingual Resume</button></div>
-        <label className="form-field wide"><span>Progress – Bahasa Indonesia</span><textarea value={form.progressId} onChange={e=>updateForm('progressId',e.target.value)} placeholder="Teks ini akan masuk ke laporan mingguan." /></label>
-        <label className="form-field wide"><span>Progress – English</span><textarea value={form.progressEn} onChange={e=>updateForm('progressEn',e.target.value)} placeholder="This text will be used in the weekly report." /></label>
+        <div className="form-field wide resume-helper"><div><span>Implementation Resume</span><small>Use Auto Generate as a starting point for the NDPE implementation resume, then edit if needed.</small></div><button type="button" className="secondary-btn" onClick={autoFillResume}>Auto Generate Bilingual Resume</button></div>
+        <label className="form-field wide"><span>Progress – Bahasa Indonesia</span><textarea value={form.progressId} onChange={e=>updateForm('progressId',e.target.value)} placeholder="Ringkasan progres Bahasa Indonesia." /></label>
+        <label className="form-field wide"><span>Progress – English</span><textarea value={form.progressEn} onChange={e=>updateForm('progressEn',e.target.value)} placeholder="English progress summary." /></label>
         <label className="form-field wide"><span>Remarks</span><textarea value={form.remarks} onChange={e=>updateForm('remarks',e.target.value)} /></label>
       </div>
       <div className="form-actions"><div></div><div className="form-action-right"><button type="button" className="secondary-btn" onClick={()=>setShowForm(false)}>Cancel</button><button className="primary-btn" disabled={saving}>{saving?'Saving…':'Save NDPE Item'}</button></div></div>
     </form></div>}
 
     {previewItem && <div className="modal-backdrop"><div className="modal-card resume-preview-modal">
-      <div className="modal-head"><div><h2>Generated Resume — {previewItem.ndpeId}</h2><p>Ready to be used in the bilingual weekly progress report.</p></div><button className="icon-btn" onClick={()=>setPreviewItem(null)}>×</button></div>
+      <div className="modal-head"><div><h2>Generated Resume — {previewItem.ndpeId}</h2><p>Bilingual NDPE implementation resume.</p></div><button className="icon-btn" onClick={()=>setPreviewItem(null)}>×</button></div>
       <ResumePreview item={previewItem} resume={getResume(previewItem)} company={companyMap[previewItem.companyId]} site={siteMap[previewItem.siteId]} />
       <div className="form-actions"><div></div><div className="form-action-right"><button className="secondary-btn" onClick={()=>copyResume(previewItem)}>Copy Bilingual Resume</button><button className="primary-btn" onClick={()=>setPreviewItem(null)}>Close</button></div></div>
     </div></div>}
@@ -304,22 +250,3 @@ function ResumePreview({item,resume,company,site}) { return <div className="resu
   <div className="resume-language"><span>Progress – Bahasa Indonesia</span><p>{resume.id}</p></div>
   <div className="resume-language"><span>Progress – English</span><p>{resume.en}</p></div>
 </div>; }
-
-function makeProgressTable(rows, standard, companyMap, siteMap, D) {
-  const { Table, TableCell, TableRow, Paragraph, TextRun, WidthType, ShadingType, borders, headerFill } = D;
-  const header = new TableRow({ children: ['No.','Unit','Stage','Progress – Bahasa Indonesia','Progress – English'].map(text => new TableCell({ borders, shading:{type:ShadingType.CLEAR,fill:headerFill}, children:[new Paragraph({children:[new TextRun({text,bold:true,size:16})]})] })) });
-  const body = rows.map((item,idx)=>{
-    const c=companyMap[item.companyId]; const s=siteMap[item.siteId]; const unit=s?.site_name||c?.company_code||'-';
-    const id=item.progressId||`Implementasi ${item.itemTitle} di ${unit} berada pada tahap ${item.stage} dengan progres ${item.progress}%. Status saat ini ${item.status}.`;
-    const en=item.progressEn||`Implementation of ${item.itemTitle} at ${unit} is currently at the ${item.stage} stage with ${item.progress}% progress. Current status is ${item.status}.`;
-    return new TableRow({children:[String(idx+1),unit,item.stage,id,en].map(text=>new TableCell({borders,children:[new Paragraph({children:[new TextRun({text:String(text),size:16})]})]}))});
-  });
-  return new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[header,...body]});
-}
-
-function makeGrievanceTable(rows,D){
-  const {Table,TableCell,TableRow,Paragraph,TextRun,WidthType,ShadingType,borders,headerFill}=D;
-  const header=new TableRow({children:['No.','Uraian – Bahasa Indonesia','Description – English'].map(text=>new TableCell({borders,shading:{type:ShadingType.CLEAR,fill:headerFill},children:[new Paragraph({children:[new TextRun({text,bold:true,size:16})]})]}))});
-  const data=rows.length?rows.map((g,idx)=>new TableRow({children:[String(idx+1),`${g.case_id} — ${g.company}${g.site?` / ${g.site}`:''}: ${g.issue_title}. Status: ${g.status}.`,`${g.case_id} — ${g.company}${g.site?` / ${g.site}`:''}: ${g.issue_title}. Current status: ${g.status}.`].map(text=>new TableCell({borders,children:[new Paragraph({children:[new TextRun({text:String(text),size:16})]})]}))})): [new TableRow({children:[new TableCell({borders,children:[new Paragraph('1')]}),new TableCell({borders,children:[new Paragraph('Tidak terdapat grievance baru pada periode laporan.')]}),new TableCell({borders,children:[new Paragraph('There are no new grievances during the reporting period.')]} )]})];
-  return new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[header,...data]});
-}
