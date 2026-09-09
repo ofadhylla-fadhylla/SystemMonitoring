@@ -18,6 +18,8 @@ export default function WeeklyReport() {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
   const [error, setError] = useState('');
   const [entryForm, setEntryForm] = useState(emptyEntry);
   const [planForm, setPlanForm] = useState(emptyPlan);
@@ -140,15 +142,184 @@ export default function WeeklyReport() {
     if (copyError) setError(copyError.message); else await loadReport();
   }
 
+  async function syncMonitoringData() {
+    if (!supabase) return;
+    setSyncing(true); setError(''); setSyncMessage('');
+    try {
+      const periodStart = addDays(reportDate, -6);
+      const futureAuditEnd = addDays(reportDate, 90);
+      const futurePlanEnd = addDays(reportDate, 370);
+
+      const [companiesRes, sitesRes, certRes, auditRes, grievanceRes] = await Promise.all([
+        supabase.from('companies').select('*'),
+        supabase.from('sites').select('*'),
+        supabase.from('certifications').select('*'),
+        supabase.from('audit_events').select('*'),
+        supabase.from('grievances').select('*'),
+      ]);
+      const sourceError = companiesRes.error || sitesRes.error || certRes.error || auditRes.error || grievanceRes.error;
+      if (sourceError) throw sourceError;
+
+      const companies = companiesRes.data || [];
+      const sites = sitesRes.data || [];
+      const certifications = certRes.data || [];
+      const audits = auditRes.data || [];
+      const grievances = grievanceRes.data || [];
+      const companyMap = Object.fromEntries(companies.map(c => [c.id, c]));
+      const siteMap = Object.fromEntries(sites.map(s => [s.id, s]));
+      const certMap = Object.fromEntries(certifications.map(c => [c.id, c]));
+
+      const generated = [];
+      const reportAudits = audits.filter(a => {
+        if (a.status === 'Cancelled' || !a.start_date) return false;
+        const end = a.end_date || a.start_date;
+        return end >= periodStart && a.start_date <= futureAuditEnd;
+      });
+
+      const auditGroups = new Map();
+      for (const audit of reportAudits) {
+        const cert = audit.certification_id ? certMap[audit.certification_id] : null;
+        const section = normalizeStandard(cert?.standard) || inferStandard(audit.title);
+        if (!PROGRESS_SECTIONS.includes(section)) continue;
+        const unit = unitLabel(audit, companyMap, siteMap);
+        const key = [section, audit.audit_type || 'Audit', audit.start_date, audit.end_date || audit.start_date, audit.status || '', audit.auditor || ''].join('|');
+        if (!auditGroups.has(key)) auditGroups.set(key, { section, audits: [], units: [] });
+        const group = auditGroups.get(key);
+        group.audits.push(audit);
+        if (unit && !group.units.includes(unit)) group.units.push(unit);
+      }
+
+      const sectionCounter = { ISPO: 1, ISCC: 1, INS: 1, Grievance: 1 };
+      for (const group of auditGroups.values()) {
+        const a = group.audits[0];
+        const rangeId = formatDateRangeID(a.start_date, a.end_date || a.start_date);
+        const rangeEn = formatDateRangeEN(a.start_date, a.end_date || a.start_date);
+        const stage = a.audit_type || 'Audit';
+        const statusId = auditStatusID(a.status);
+        const statusEn = auditStatusEN(a.status);
+        generated.push({
+          report_date: reportDate,
+          section: group.section,
+          unit: group.units.join(', '),
+          stage,
+          progress_id: `${stage} ${statusId} pada ${rangeId}.${a.auditor ? ` Auditor: ${a.auditor}.` : ''}${a.notes ? ` ${cleanSentence(a.notes)}` : ''}`,
+          progress_en: `${stage} ${statusEn} on ${rangeEn}.${a.auditor ? ` Auditor: ${a.auditor}.` : ''}${a.notes ? ` ${cleanSentence(a.notes)}` : ''}`,
+          sort_order: sectionCounter[group.section]++,
+          source_module: 'audit_events',
+          source_reference: group.audits.map(x => x.id).join(','),
+        });
+      }
+
+      const recentCerts = certifications.filter(c => {
+        const basis = c.issue_date || c.valid_from;
+        const section = normalizeStandard(c.standard);
+        return PROGRESS_SECTIONS.includes(section) && c.status === 'Certified' && basis && basis >= periodStart && basis <= reportDate;
+      });
+      const certGroups = new Map();
+      for (const cert of recentCerts) {
+        const section = normalizeStandard(cert.standard);
+        const unit = certUnitLabel(cert, companyMap, siteMap);
+        const latestAudit = audits
+          .filter(a => a.certification_id === cert.id && a.start_date && a.start_date <= reportDate)
+          .sort((a,b) => String(b.start_date).localeCompare(String(a.start_date)))[0];
+        const stage = latestAudit?.audit_type || 'Certification';
+        const key = [section, stage, cert.valid_from || '', cert.valid_until || '', cert.product || '', cert.certification_body || ''].join('|');
+        if (!certGroups.has(key)) certGroups.set(key, { section, stage, certs: [], units: [] });
+        const group = certGroups.get(key); group.certs.push(cert); if (unit && !group.units.includes(unit)) group.units.push(unit);
+      }
+      for (const group of certGroups.values()) {
+        const c = group.certs[0];
+        const validityId = c.valid_from && c.valid_until ? `${formatDateID(c.valid_from)} – ${formatDateID(c.valid_until)}` : (c.valid_until ? `sampai ${formatDateID(c.valid_until)}` : '-');
+        const validityEn = c.valid_from && c.valid_until ? `${formatDateEN(c.valid_from)} to ${formatDateEN(c.valid_until)}` : (c.valid_until ? `until ${formatDateEN(c.valid_until)}` : '-');
+        const scopeId = c.product ? ` Cakupan material: ${trimEnd(c.product)}.` : '';
+        const scopeEn = c.product ? ` Material scope: ${trimEnd(c.product)}.` : '';
+        generated.push({
+          report_date: reportDate,
+          section: group.section,
+          unit: group.units.join(', '),
+          stage: group.stage,
+          progress_id: `Sertifikat terbaru telah terbit dan berlaku ${validityId}.${scopeId}`,
+          progress_en: `The latest certificate has been issued and is valid from ${validityEn}.${scopeEn}`,
+          sort_order: sectionCounter[group.section]++,
+          source_module: 'certifications',
+          source_reference: group.certs.map(x => x.id).join(','),
+        });
+      }
+
+      const newGrievances = grievances.filter(g => g.opened_date && g.opened_date >= periodStart && g.opened_date <= reportDate);
+      for (const g of newGrievances) {
+        const company = companyMap[g.company_id]?.company_code || g.company || '-';
+        generated.push({
+          report_date: reportDate,
+          section: 'Grievance',
+          unit: null,
+          stage: null,
+          progress_id: `Grievance baru ${g.case_id || ''} terkait ${g.issue_title || g.category || 'isu stakeholder'} di ${company}. Status saat ini ${g.status || 'Open'} dengan progres ${Number(g.progress || 0)}%.`,
+          progress_en: `A new grievance ${g.case_id || ''} regarding ${g.issue_title || g.category || 'a stakeholder issue'} at ${company} was registered. Current status is ${g.status || 'Open'} with ${Number(g.progress || 0)}% progress.`,
+          sort_order: sectionCounter.Grievance++,
+          source_module: 'grievances',
+          source_reference: g.id,
+        });
+      }
+
+      const { error: deleteAutoError } = await supabase
+        .from('weekly_report_entries')
+        .delete()
+        .eq('report_date', reportDate)
+        .in('source_module', ['audit_events', 'certifications', 'grievances']);
+      if (deleteAutoError) throw deleteAutoError;
+      if (generated.length) {
+        const { error: insertAutoError } = await supabase.from('weekly_report_entries').insert(generated);
+        if (insertAutoError) throw insertAutoError;
+      }
+
+      const planAudits = audits.filter(a => {
+        const cert = a.certification_id ? certMap[a.certification_id] : null;
+        const section = normalizeStandard(cert?.standard) || inferStandard(a.title);
+        const type = String(a.audit_type || '').toLowerCase();
+        return section === 'ISPO' && a.status !== 'Cancelled' && a.start_date >= reportDate && a.start_date <= futurePlanEnd && (type.includes('stage i') || type.includes('stage 1') || type.includes('stage ii') || type.includes('stage 2'));
+      });
+      const planMap = new Map();
+      for (const a of planAudits) {
+        const company = companyMap[a.company_id];
+        const code = company?.company_code || unitLabel(a, companyMap, siteMap) || 'PT';
+        if (!planMap.has(code)) planMap.set(code, { pt: code, stage1: '', stage2: '', refs: [] });
+        const p = planMap.get(code); p.refs.push(a.id);
+        const type = String(a.audit_type || '').toLowerCase();
+        if (type.includes('stage ii') || type.includes('stage 2')) p.stage2 = weekOfMonthLabel(a.start_date);
+        else p.stage1 = weekOfMonthLabel(a.start_date);
+      }
+      const { error: delPlanError } = await supabase
+        .from('weekly_ispo_plans').delete().eq('report_date', reportDate).eq('source_module', 'audit_events');
+      if (delPlanError) throw delPlanError;
+      const autoPlans = [...planMap.values()].map((p, i) => ({
+        report_date: reportDate, pt: p.pt, stage_1: p.stage1 || null, stage_2: p.stage2 || null,
+        explanation: 'Audit schedule is synchronized from Audit Monitoring.', sort_order: i + 1,
+        source_module: 'audit_events', source_reference: p.refs.join(','),
+      }));
+      if (autoPlans.length) {
+        const { error: planInsertError } = await supabase.from('weekly_ispo_plans').insert(autoPlans);
+        if (planInsertError) throw planInsertError;
+      }
+
+      await loadReport();
+      setSyncMessage(`Monitoring data synchronized: ${generated.length} progress row(s) and ${autoPlans.length} ISPO plan row(s). Manual rows are preserved.`);
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function generateWord() {
     const {
       Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun,
-      WidthType, AlignmentType, ShadingType, BorderStyle, PageOrientation,
+      WidthType, AlignmentType, ShadingType, BorderStyle, PageOrientation, Footer,
     } = await import('docx');
 
     const border = { style: BorderStyle.SINGLE, size: 1, color: '65737B' };
     const borders = { top: border, bottom: border, left: border, right: border };
-    const headerFill = 'D9E7F5';
+    const headerFill = 'B8CCE4';
     const year = new Date(`${reportDate}T00:00:00`).getFullYear();
     const children = [
       new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [new TextRun({ text: 'WEEKLY PROGRESS REPORT – SYSTEM & MONITORING', bold: true, size: 28 })] }),
@@ -178,9 +349,11 @@ export default function WeeklyReport() {
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'KPN Plantations – Sustainability HO | System & Monitoring', size: 15, color: '59666D' })] }));
 
     const doc = new Document({
+      styles: { default: { document: { run: { font: 'Arial', size: 16 }, paragraph: { spacing: { after: 40 } } } } },
       sections: [{
         properties: { page: { size: { orientation: PageOrientation.PORTRAIT }, margin: { top: 700, right: 600, bottom: 650, left: 600 } } },
         children,
+        footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'KPN Plantations – Sustainability HO | System & Monitoring', size: 14, font: 'Arial', color: '59666D' })] })] }) },
       }],
     });
     const blob = await Packer.toBlob(doc);
@@ -195,7 +368,7 @@ export default function WeeklyReport() {
   return <div className="page-wrap">
     <div className="page-heading weekly-heading">
       <div><h1>Weekly Progress Report</h1><p>Dedicated report module following the bilingual System & Monitoring weekly report format.</p></div>
-      <div className="detail-actions"><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
+      <div className="detail-actions"><button className="secondary-btn" onClick={syncMonitoringData} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync Monitoring Data'}</button><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
     </div>
 
     {error ? <div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div> : <div className="sync-success">● Weekly Report is separate from NDPE Implementation</div>}
@@ -204,6 +377,15 @@ export default function WeeklyReport() {
       <div><strong>Report Date</strong><span>The report is saved by weekly reporting date.</span></div>
       <input type="date" value={reportDate} onChange={e => setReportDate(e.target.value)} />
     </section>
+
+    <section className="panel weekly-auto-panel">
+      <div>
+        <strong>Automatic Monitoring Source</strong>
+        <span>Sync pulls ISPO / ISCC / INS progress from Audit & Certification Monitoring, new grievances from the reporting week, and keeps Lain-lain/manual rows editable.</span>
+      </div>
+      <div className="weekly-auto-chips"><span>Audit Monitoring</span><span>Certification Monitoring</span><span>Grievance</span></div>
+    </section>
+    {syncMessage ? <div className="sync-success">● {syncMessage}</div> : null}
 
     <section className="panel weekly-paper">
       <div className="weekly-paper-title">WEEKLY PROGRESS REPORT – SYSTEM & MONITORING</div>
@@ -261,13 +443,13 @@ export default function WeeklyReport() {
 
 function ProgressPreview({ rows, onEdit, onDelete, loading }) {
   return <div className="table-wrap"><table className="weekly-table"><thead><tr><th>No.</th><th>Unit</th><th>Stage</th><th>Progress – Bahasa Indonesia</th><th>Progress – English</th><th>Actions</th></tr></thead><tbody>
-    {loading ? <tr><td colSpan="6" className="empty-cell">Loading…</td></tr> : rows.length ? rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td><td><strong>{r.unit || '-'}</strong></td><td>{r.stage || '-'}</td><td className="weekly-text-cell">{r.progress_id}</td><td className="weekly-text-cell">{r.progress_en}</td><td><div className="table-actions"><button className="view-btn" onClick={() => onEdit(r)}>Edit</button><button className="danger-btn compact" onClick={() => onDelete(r)}>Delete</button></div></td></tr>) : <tr><td colSpan="6" className="empty-cell">No rows yet.</td></tr>}
+    {loading ? <tr><td colSpan="6" className="empty-cell">Loading…</td></tr> : rows.length ? rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td><td><strong>{r.unit || '-'}</strong>{r.source_module ? <div className="source-tag">AUTO · {sourceLabel(r.source_module)}</div> : <div className="source-tag manual">MANUAL</div>}</td><td>{r.stage || '-'}</td><td className="weekly-text-cell">{r.progress_id}{r.source_module ? <div className="source-tag">AUTO · {sourceLabel(r.source_module)}</div> : null}</td><td className="weekly-text-cell">{r.progress_en}</td><td><div className="table-actions"><button className="view-btn" onClick={() => onEdit(r)}>Edit</button><button className="danger-btn compact" onClick={() => onDelete(r)}>Delete</button></div></td></tr>) : <tr><td colSpan="6" className="empty-cell">No rows yet.</td></tr>}
   </tbody></table></div>;
 }
 
 function PlanPreview({ rows, onEdit, onDelete, loading }) {
   return <div className="table-wrap"><table className="weekly-table"><thead><tr><th>No.</th><th>PT</th><th>Stage 1</th><th>Stage 2</th><th>Explanation</th><th>Actions</th></tr></thead><tbody>
-    {loading ? <tr><td colSpan="6" className="empty-cell">Loading…</td></tr> : rows.length ? rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td><td><strong>{r.pt}</strong></td><td>{r.stage_1 || '-'}</td><td>{r.stage_2 || '-'}</td><td className="weekly-text-cell">{r.explanation || '-'}</td><td><div className="table-actions"><button className="view-btn" onClick={() => onEdit(r)}>Edit</button><button className="danger-btn compact" onClick={() => onDelete(r)}>Delete</button></div></td></tr>) : <tr><td colSpan="6" className="empty-cell">No ISPO plan rows yet.</td></tr>}
+    {loading ? <tr><td colSpan="6" className="empty-cell">Loading…</td></tr> : rows.length ? rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td><td><strong>{r.pt}</strong>{r.source_module ? <div className="source-tag">AUTO · Audit</div> : <div className="source-tag manual">MANUAL</div>}</td><td>{r.stage_1 || '-'}</td><td>{r.stage_2 || '-'}</td><td className="weekly-text-cell">{r.explanation || '-'}</td><td><div className="table-actions"><button className="view-btn" onClick={() => onEdit(r)}>Edit</button><button className="danger-btn compact" onClick={() => onDelete(r)}>Delete</button></div></td></tr>) : <tr><td colSpan="6" className="empty-cell">No ISPO plan rows yet.</td></tr>}
   </tbody></table></div>;
 }
 
@@ -279,7 +461,7 @@ function BilingualPreview({ rows, section, onEdit, onDelete, loading }) {
 }
 
 function sectionTitle(text, D) { return new D.Paragraph({ spacing: { before: 120, after: 80 }, children: [new D.TextRun({ text, bold: true, size: 22 })] }); }
-function cell(text, D, opts = {}) { return new D.TableCell({ borders: D.borders, shading: opts.header ? { type: D.ShadingType.CLEAR, fill: D.headerFill } : undefined, children: [new D.Paragraph({ children: [new D.TextRun({ text: String(text ?? ''), bold: !!opts.header, size: 15 })] })] }); }
+function cell(text, D, opts = {}) { return new D.TableCell({ borders: D.borders, shading: opts.header ? { type: D.ShadingType.CLEAR, fill: D.headerFill } : undefined, margins: { top: 45, bottom: 45, left: 55, right: 55 }, children: [new D.Paragraph({ children: [new D.TextRun({ text: String(text ?? ''), bold: !!opts.header, size: 15, font: 'Arial' })] })] }); }
 
 function progressTable(rows, D) {
   const header = new D.TableRow({ children: ['No.','Unit','Stage','Progress – Bahasa Indonesia','Progress – English'].map(t => cell(t, D, { header: true })) });
@@ -288,8 +470,13 @@ function progressTable(rows, D) {
 }
 
 function ispoPlanTable(rows, D) {
-  const headerTop = new D.TableRow({ children: [cell('No', D, { header: true }), cell('PT', D, { header: true }), cell('Timeline', D, { header: true }), cell('', D, { header: true }), cell('Explanation', D, { header: true })] });
-  const headerBottom = new D.TableRow({ children: [cell('', D, { header: true }), cell('', D, { header: true }), cell('Stage 1', D, { header: true }), cell('Stage 2', D, { header: true }), cell('', D, { header: true })] });
+  const headerTop = new D.TableRow({ children: [
+    new D.TableCell({ rowSpan: 2, borders: D.borders, shading: { type: D.ShadingType.CLEAR, fill: D.headerFill }, children: [new D.Paragraph({ children: [new D.TextRun({ text: 'No', bold: true, size: 15, font: 'Arial' })] })] }),
+    new D.TableCell({ rowSpan: 2, borders: D.borders, shading: { type: D.ShadingType.CLEAR, fill: D.headerFill }, children: [new D.Paragraph({ children: [new D.TextRun({ text: 'PT', bold: true, size: 15, font: 'Arial' })] })] }),
+    new D.TableCell({ columnSpan: 2, borders: D.borders, shading: { type: D.ShadingType.CLEAR, fill: D.headerFill }, children: [new D.Paragraph({ alignment: D.AlignmentType?.CENTER, children: [new D.TextRun({ text: 'Timeline', bold: true, size: 15, font: 'Arial' })] })] }),
+    new D.TableCell({ rowSpan: 2, borders: D.borders, shading: { type: D.ShadingType.CLEAR, fill: D.headerFill }, children: [new D.Paragraph({ children: [new D.TextRun({ text: 'Explanation', bold: true, size: 15, font: 'Arial' })] })] }),
+  ] });
+  const headerBottom = new D.TableRow({ children: [cell('Stage 1', D, { header: true }), cell('Stage 2', D, { header: true })] });
   const data = rows.map((r, i) => new D.TableRow({ children: [i + 1, r.pt, r.stage_1 || '', r.stage_2 || '', r.explanation || ''].map(v => cell(v, D)) }));
   return new D.Table({ width: { size: 100, type: D.WidthType.PERCENTAGE }, rows: [headerTop, headerBottom, ...data] });
 }
@@ -302,6 +489,45 @@ function simpleBilingualTable(rows, section, D) {
   else data = [new D.TableRow({ children: [cell('1', D), cell('-', D), cell('-', D)] })];
   return new D.Table({ width: { size: 100, type: D.WidthType.PERCENTAGE }, rows: [header, ...data] });
 }
+
+function sourceLabel(source) {
+  if (source === 'audit_events') return 'Audit';
+  if (source === 'certifications') return 'Certification';
+  if (source === 'grievances') return 'Grievance';
+  return source || 'Source';
+}
+function addDays(value, amount) {
+  const d = new Date(`${value}T00:00:00`); d.setDate(d.getDate() + amount);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function normalizeStandard(value) {
+  const s = String(value || '').toUpperCase();
+  if (s.includes('ISPO')) return 'ISPO'; if (s.includes('ISCC')) return 'ISCC'; if (/\bINS\b/.test(s)) return 'INS'; return '';
+}
+function inferStandard(value) { return normalizeStandard(value); }
+function unitLabel(row, companyMap, siteMap) {
+  const site = siteMap[row.site_id]; const company = companyMap[row.company_id];
+  return site?.site_code || site?.site_name || company?.company_code || '-';
+}
+function certUnitLabel(row, companyMap, siteMap) { return unitLabel(row, companyMap, siteMap); }
+function formatDateID(value) { if (!value) return '-'; const d=new Date(`${value}T00:00:00`); return d.toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'}); }
+function formatDateEN(value) { if (!value) return '-'; const d=new Date(`${value}T00:00:00`); return d.toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}); }
+function formatDateRangeID(start,end) { return start===end ? formatDateID(start) : `${formatDateID(start)}–${formatDateID(end)}`; }
+function formatDateRangeEN(start,end) { return start===end ? formatDateEN(start) : `${formatDateEN(start)}–${formatDateEN(end)}`; }
+function auditStatusID(status) {
+  if (status === 'Done') return 'telah dilaksanakan'; if (status === 'Postponed') return 'ditunda';
+  if (status === 'Confirmed') return 'dijadwalkan dan telah dikonfirmasi'; return 'direncanakan';
+}
+function auditStatusEN(status) {
+  if (status === 'Done') return 'has been completed'; if (status === 'Postponed') return 'has been postponed';
+  if (status === 'Confirmed') return 'is scheduled and confirmed'; return 'is planned';
+}
+function weekOfMonthLabel(value) {
+  const d=new Date(`${value}T00:00:00`); const week=Math.ceil(d.getDate()/7); const suffix=week===1?'st':week===2?'nd':week===3?'rd':'th';
+  return `${week}${suffix} Week ${d.toLocaleDateString('en-GB',{month:'short',year:'numeric'})}`;
+}
+function cleanSentence(value) { const t=String(value||'').trim(); return !t ? '' : /[.!?]$/.test(t) ? t : `${t}.`; }
+function trimEnd(value) { return String(value||'').trim().replace(/[.;,]+$/,''); }
 
 function formatLongDate(value) {
   if (!value) return '-';
