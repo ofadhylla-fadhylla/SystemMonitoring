@@ -10,6 +10,7 @@ const OVERRIDES_KEY = 'sm_grievance_overrides';
 const UPDATES_KEY = 'sm_grievance_updates';
 const ACTIONS_KEY = 'sm_grievance_actions';
 const EVIDENCE_KEY = 'sm_grievance_evidence';
+const CLOSURE_KEY = 'sm_grievance_closure';
 const EVIDENCE_DB = 'sm_system_monitoring_evidence';
 const EVIDENCE_STORE = 'files';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -68,6 +69,24 @@ const emptyAction = {
   remarks: '',
 };
 
+const emptyClosure = {
+  closureDate: '',
+  verifiedBy: '',
+  verificationMethod: 'Document Review',
+  outcome: 'Resolved',
+  closureSummary: '',
+  evidenceReference: '',
+};
+
+const emptyReopen = {
+  reopenDate: '',
+  reopenedBy: '',
+  reason: '',
+  progress: 90,
+  nextAction: '',
+  dueDate: '',
+};
+
 export default function GrievanceDetail() {
   const params = useParams();
   const id = params?.id;
@@ -77,18 +96,24 @@ export default function GrievanceDetail() {
   const [caseUpdates, setCaseUpdates] = useState([]);
   const [actions, setActions] = useState([]);
   const [evidence, setEvidence] = useState([]);
+  const [closure, setClosure] = useState(null);
   const [loaded, setLoaded] = useState(false);
 
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showActionForm, setShowActionForm] = useState(false);
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
+  const [showClosureForm, setShowClosureForm] = useState(false);
+  const [showReopenForm, setShowReopenForm] = useState(false);
   const [editingActionId, setEditingActionId] = useState(null);
 
   const [form, setForm] = useState({ ...emptyUpdate, date: todayISO() });
   const [editForm, setEditForm] = useState(emptyEdit);
   const [actionForm, setActionForm] = useState(emptyAction);
   const [evidenceForm, setEvidenceForm] = useState({ ...emptyEvidence, evidenceDate: todayISO() });
+  const [closureForm, setClosureForm] = useState({ ...emptyClosure, closureDate: todayISO() });
+  const [reopenForm, setReopenForm] = useState({ ...emptyReopen, reopenDate: todayISO() });
+  const [closureError, setClosureError] = useState('');
   const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [evidenceError, setEvidenceError] = useState('');
 
@@ -115,6 +140,10 @@ export default function GrievanceDetail() {
       const savedEvidence = safeParse(localStorage.getItem(EVIDENCE_KEY), {});
       const allEvidence = savedEvidence && typeof savedEvidence === 'object' ? savedEvidence : {};
       setEvidence(Array.isArray(allEvidence[id]) ? allEvidence[id] : []);
+
+      const savedClosure = safeParse(localStorage.getItem(CLOSURE_KEY), {});
+      const allClosure = savedClosure && typeof savedClosure === 'object' ? savedClosure : {};
+      setClosure(allClosure[id] || null);
 
       const merged = { ...(found || {}), ...thisOverride };
       setForm(prev => ({
@@ -187,6 +216,14 @@ export default function GrievanceDetail() {
     setEvidenceForm(prev => ({ ...prev, [field]: value }));
   }
 
+  function updateClosureForm(field, value) {
+    setClosureForm(prev => ({ ...prev, [field]: value }));
+  }
+
+  function updateReopenForm(field, value) {
+    setReopenForm(prev => ({ ...prev, [field]: value }));
+  }
+
   function openUpdateForm() {
     setForm({
       ...emptyUpdate,
@@ -229,6 +266,28 @@ export default function GrievanceDetail() {
     setEvidenceError('');
     setEvidenceForm({ ...emptyEvidence, id: createEvidenceId(evidence), evidenceDate: todayISO() });
     setShowEvidenceForm(true);
+  }
+
+  function openClosureForm() {
+    setClosureError('');
+    setClosureForm({
+      ...emptyClosure,
+      closureDate: todayISO(),
+      evidenceReference: evidence[0]?.id || '',
+    });
+    setShowClosureForm(true);
+  }
+
+  function openReopenForm() {
+    setClosureError('');
+    setReopenForm({
+      ...emptyReopen,
+      reopenDate: todayISO(),
+      progress: 90,
+      nextAction: '',
+      dueDate: '',
+    });
+    setShowReopenForm(true);
   }
 
   function openEditActionForm(action) {
@@ -335,6 +394,106 @@ export default function GrievanceDetail() {
   }
 
 
+  function saveClosure(e) {
+    e.preventDefault();
+    if (!g) return;
+    setClosureError('');
+
+    const activeActions = actions.filter(a => a.status !== 'Completed');
+    if (activeActions.length > 0) {
+      setClosureError(`Cannot close yet: ${activeActions.length} action plan(s) are still open or active.`);
+      return;
+    }
+    if (evidence.length === 0) {
+      setClosureError('Cannot close yet: upload at least one evidence file before closure.');
+      return;
+    }
+    if (!closureForm.verifiedBy.trim() || !closureForm.closureSummary.trim()) {
+      setClosureError('Verified By and Closure Summary are required.');
+      return;
+    }
+
+    const record = {
+      ...closureForm,
+      closureDate: closureForm.closureDate || todayISO(),
+      verifiedBy: closureForm.verifiedBy.trim(),
+      closureSummary: closureForm.closureSummary.trim(),
+      closedAt: new Date().toISOString(),
+      reopened: false,
+    };
+    setClosure(record);
+    persistMapItem(CLOSURE_KEY, g.id, record);
+
+    const nextOverride = {
+      ...override,
+      status: 'Closed',
+      progress: 100,
+      nextAction: '',
+      closedDate: record.closureDate,
+      lastUpdated: record.closureDate,
+    };
+    setOverride(nextOverride);
+    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
+
+    const closeUpdate = {
+      id: `UPD-${Date.now()}`,
+      date: record.closureDate,
+      title: 'Grievance Closed',
+      description: record.closureSummary,
+      updatedBy: record.verifiedBy,
+      createdAt: new Date().toISOString(),
+    };
+    const updatedCaseUpdates = [...caseUpdates, closeUpdate];
+    setCaseUpdates(updatedCaseUpdates);
+    persistMapItem(UPDATES_KEY, g.id, updatedCaseUpdates);
+    setShowClosureForm(false);
+  }
+
+  function saveReopen(e) {
+    e.preventDefault();
+    if (!g) return;
+    setClosureError('');
+    if (!reopenForm.reopenedBy.trim() || !reopenForm.reason.trim()) {
+      setClosureError('Reopened By and Reason are required.');
+      return;
+    }
+
+    const reopenRecord = {
+      ...(closure || {}),
+      reopened: true,
+      reopenDate: reopenForm.reopenDate || todayISO(),
+      reopenedBy: reopenForm.reopenedBy.trim(),
+      reopenReason: reopenForm.reason.trim(),
+      reopenedAt: new Date().toISOString(),
+    };
+    setClosure(reopenRecord);
+    persistMapItem(CLOSURE_KEY, g.id, reopenRecord);
+
+    const nextOverride = {
+      ...override,
+      status: 'In Progress',
+      progress: clampProgress(reopenForm.progress),
+      nextAction: reopenForm.nextAction.trim(),
+      dueDate: reopenForm.dueDate,
+      closedDate: '',
+      lastUpdated: reopenRecord.reopenDate,
+    };
+    setOverride(nextOverride);
+    persistMapItem(OVERRIDES_KEY, g.id, nextOverride);
+
+    const reopenUpdate = {
+      id: `UPD-${Date.now()}`,
+      date: reopenRecord.reopenDate,
+      title: 'Grievance Reopened',
+      description: reopenRecord.reopenReason,
+      updatedBy: reopenRecord.reopenedBy,
+      createdAt: new Date().toISOString(),
+    };
+    const updatedCaseUpdates = [...caseUpdates, reopenUpdate];
+    setCaseUpdates(updatedCaseUpdates);
+    persistMapItem(UPDATES_KEY, g.id, updatedCaseUpdates);
+    setShowReopenForm(false);
+  }
 
   async function saveEvidence(e) {
     e.preventDefault();
@@ -627,6 +786,56 @@ export default function GrievanceDetail() {
         <div className="starter-warning">Starter mode: file metadata is stored in Local Storage and the actual file is stored in this browser's IndexedDB. Files are not shared with other devices yet.</div>
       </section>
 
+      <section className="panel closure-panel">
+        <div className="panel-head closure-panel-head">
+          <div>
+            <h2>Closure & Verification</h2>
+            <p>Close only after actions are completed and supporting evidence is available.</p>
+          </div>
+          {g.status === 'Closed'
+            ? <button className="secondary-btn" onClick={openReopenForm}>Reopen Grievance</button>
+            : <button className="primary-btn" onClick={openClosureForm}>Close Grievance</button>}
+        </div>
+
+        <div className="closure-readiness">
+          <div className={`readiness-item ${actions.filter(a => a.status !== 'Completed').length === 0 ? 'ready' : 'blocked'}`}>
+            <span>Action Plan</span>
+            <strong>{actions.filter(a => a.status !== 'Completed').length === 0 ? 'Ready' : `${actions.filter(a => a.status !== 'Completed').length} active`}</strong>
+          </div>
+          <div className={`readiness-item ${evidence.length > 0 ? 'ready' : 'blocked'}`}>
+            <span>Evidence</span>
+            <strong>{evidence.length > 0 ? `${evidence.length} file(s)` : 'Required'}</strong>
+          </div>
+          <div className={`readiness-item ${g.status === 'Closed' ? 'ready' : 'pending'}`}>
+            <span>Verification</span>
+            <strong>{g.status === 'Closed' ? 'Completed' : 'Pending'}</strong>
+          </div>
+        </div>
+
+        {g.status === 'Closed' && closure ? (
+          <div className="closure-record">
+            <div className="closure-badge">✓ CLOSED</div>
+            <div className="info-grid closure-info-grid">
+              <Info label="Closure Date" value={closure.closureDate || '-'} />
+              <Info label="Verified By" value={closure.verifiedBy || '-'} />
+              <Info label="Verification Method" value={closure.verificationMethod || '-'} />
+              <Info label="Outcome" value={closure.outcome || '-'} />
+              <Info label="Evidence Reference" value={closure.evidenceReference || '-'} />
+            </div>
+            <div className="summary-box"><span>Closure Summary</span><p>{closure.closureSummary || '-'}</p></div>
+          </div>
+        ) : closure?.reopened ? (
+          <div className="reopen-history">
+            <strong>Previously closed and reopened</strong>
+            <p>{closure.reopenDate || '-'} · {closure.reopenedBy || '-'} · {closure.reopenReason || '-'}</p>
+          </div>
+        ) : (
+          <div className="closure-help">
+            Closure requires: no active action plan, at least one evidence file, verifier name, and closure summary.
+          </div>
+        )}
+      </section>
+
       {showUpdateForm && (
         <Modal onClose={() => setShowUpdateForm(false)} title="Add Case Update" subtitle={`${g.id} — save follow-up activity and update case progress.`}>
           <form onSubmit={saveUpdate}>
@@ -738,6 +947,61 @@ export default function GrievanceDetail() {
               <button type="button" className="secondary-btn" disabled={evidenceBusy} onClick={() => setShowEvidenceForm(false)}>Cancel</button>
               <button type="submit" className="primary-btn" disabled={evidenceBusy}>{evidenceBusy ? 'Saving...' : 'Upload Evidence'}</button>
             </div>
+          </form>
+        </Modal>
+      )}
+
+      {showClosureForm && (
+        <Modal onClose={() => setShowClosureForm(false)} title="Close Grievance" subtitle={`${g.id} — verify resolution before closing the case.`} wide>
+          <form onSubmit={saveClosure}>
+            <div className="closure-rule-box">
+              <strong>Closure checks</strong>
+              <div>• Active actions: {actions.filter(a => a.status !== 'Completed').length}</div>
+              <div>• Evidence files: {evidence.length}</div>
+              <div>All active actions must be completed and at least one evidence file must exist.</div>
+            </div>
+            <div className="form-grid">
+              <Field label="Closure Date *"><input required type="date" value={closureForm.closureDate} onChange={e=>updateClosureForm('closureDate', e.target.value)} /></Field>
+              <Field label="Verified By *"><input required value={closureForm.verifiedBy} onChange={e=>updateClosureForm('verifiedBy', e.target.value)} placeholder="Verifier / responsible person" /></Field>
+              <Field label="Verification Method">
+                <select value={closureForm.verificationMethod} onChange={e=>updateClosureForm('verificationMethod', e.target.value)}>
+                  {['Document Review','Field Verification','Stakeholder Confirmation','Management Approval','Other'].map(v=><option key={v}>{v}</option>)}
+                </select>
+              </Field>
+              <Field label="Outcome">
+                <select value={closureForm.outcome} onChange={e=>updateClosureForm('outcome', e.target.value)}>
+                  {['Resolved','Resolved with Monitoring','Partially Resolved','No Further Action'].map(v=><option key={v}>{v}</option>)}
+                </select>
+              </Field>
+              <Field label="Primary Evidence">
+                <select value={closureForm.evidenceReference} onChange={e=>updateClosureForm('evidenceReference', e.target.value)}>
+                  <option value="">Select evidence</option>
+                  {evidence.map(item => <option key={item.id} value={item.id}>{item.id} — {item.title}</option>)}
+                </select>
+              </Field>
+              <Field label="Closure Summary *" wide><textarea required rows="5" value={closureForm.closureSummary} onChange={e=>updateClosureForm('closureSummary', e.target.value)} placeholder="Why can this grievance be considered resolved? Include verification result and final condition." /></Field>
+            </div>
+            {closureError ? <div className="form-error">{closureError}</div> : null}
+            <StarterWarning text="Starter mode: closure records are stored in this browser only." />
+            <FormActions onCancel={() => setShowClosureForm(false)} submit="Verify & Close Grievance" />
+          </form>
+        </Modal>
+      )}
+
+      {showReopenForm && (
+        <Modal onClose={() => setShowReopenForm(false)} title="Reopen Grievance" subtitle={`${g.id} — reopen a closed case with a documented reason.`} wide>
+          <form onSubmit={saveReopen}>
+            <div className="form-grid">
+              <Field label="Reopen Date *"><input required type="date" value={reopenForm.reopenDate} onChange={e=>updateReopenForm('reopenDate', e.target.value)} /></Field>
+              <Field label="Reopened By *"><input required value={reopenForm.reopenedBy} onChange={e=>updateReopenForm('reopenedBy', e.target.value)} placeholder="Person / team" /></Field>
+              <Field label="Reason for Reopening *" wide><textarea required rows="4" value={reopenForm.reason} onChange={e=>updateReopenForm('reason', e.target.value)} placeholder="New complaint, failed verification, recurring issue, incomplete resolution, etc." /></Field>
+              <Field label="Progress %"><input type="number" min="0" max="99" value={reopenForm.progress} onChange={e=>updateReopenForm('progress', e.target.value)} /></Field>
+              <Field label="New Due Date"><input type="date" value={reopenForm.dueDate} onChange={e=>updateReopenForm('dueDate', e.target.value)} /></Field>
+              <Field label="Next Action" wide><input value={reopenForm.nextAction} onChange={e=>updateReopenForm('nextAction', e.target.value)} placeholder="What must happen next?" /></Field>
+            </div>
+            {closureError ? <div className="form-error">{closureError}</div> : null}
+            <StarterWarning text="Reopening keeps the previous closure record in the case history." />
+            <FormActions onCancel={() => setShowReopenForm(false)} submit="Reopen Case" />
           </form>
         </Modal>
       )}
