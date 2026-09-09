@@ -9,6 +9,10 @@ const CUSTOM_KEY = 'sm_custom_grievances';
 const OVERRIDES_KEY = 'sm_grievance_overrides';
 const UPDATES_KEY = 'sm_grievance_updates';
 const ACTIONS_KEY = 'sm_grievance_actions';
+const EVIDENCE_KEY = 'sm_grievance_evidence';
+const EVIDENCE_DB = 'sm_system_monitoring_evidence';
+const EVIDENCE_STORE = 'files';
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -41,6 +45,17 @@ const emptyEdit = {
   summary: '',
 };
 
+const emptyEvidence = {
+  id: '',
+  title: '',
+  category: 'Meeting Minutes',
+  evidenceDate: '',
+  uploadedBy: '',
+  linkedActionId: '',
+  description: '',
+  file: null,
+};
+
 const emptyAction = {
   id: '',
   description: '',
@@ -61,16 +76,21 @@ export default function GrievanceDetail() {
   const [override, setOverride] = useState({});
   const [caseUpdates, setCaseUpdates] = useState([]);
   const [actions, setActions] = useState([]);
+  const [evidence, setEvidence] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showActionForm, setShowActionForm] = useState(false);
+  const [showEvidenceForm, setShowEvidenceForm] = useState(false);
   const [editingActionId, setEditingActionId] = useState(null);
 
   const [form, setForm] = useState({ ...emptyUpdate, date: todayISO() });
   const [editForm, setEditForm] = useState(emptyEdit);
   const [actionForm, setActionForm] = useState(emptyAction);
+  const [evidenceForm, setEvidenceForm] = useState({ ...emptyEvidence, evidenceDate: todayISO() });
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
 
   useEffect(() => {
     try {
@@ -91,6 +111,10 @@ export default function GrievanceDetail() {
       const savedActions = safeParse(localStorage.getItem(ACTIONS_KEY), {});
       const allActions = savedActions && typeof savedActions === 'object' ? savedActions : {};
       setActions(Array.isArray(allActions[id]) ? allActions[id] : []);
+
+      const savedEvidence = safeParse(localStorage.getItem(EVIDENCE_KEY), {});
+      const allEvidence = savedEvidence && typeof savedEvidence === 'object' ? savedEvidence : {};
+      setEvidence(Array.isArray(allEvidence[id]) ? allEvidence[id] : []);
 
       const merged = { ...(found || {}), ...thisOverride };
       setForm(prev => ({
@@ -140,6 +164,13 @@ export default function GrievanceDetail() {
     return { completed, overdue, open };
   }, [actions]);
 
+  const evidenceStats = useMemo(() => {
+    const totalBytes = evidence.reduce((sum, item) => sum + Number(item.fileSize || 0), 0);
+    const linked = evidence.filter(item => item.linkedActionId).length;
+    const latest = [...evidence].sort((a,b) => String(b.evidenceDate || '').localeCompare(String(a.evidenceDate || '')))[0];
+    return { totalBytes, linked, latest };
+  }, [evidence]);
+
   function updateForm(field, value) {
     setForm(prev => ({ ...prev, [field]: value }));
   }
@@ -150,6 +181,10 @@ export default function GrievanceDetail() {
 
   function updateActionForm(field, value) {
     setActionForm(prev => ({ ...prev, [field]: value }));
+  }
+
+  function updateEvidenceForm(field, value) {
+    setEvidenceForm(prev => ({ ...prev, [field]: value }));
   }
 
   function openUpdateForm() {
@@ -188,6 +223,12 @@ export default function GrievanceDetail() {
     setEditingActionId(null);
     setActionForm({ ...emptyAction, id: createActionId(actions), targetDate: g?.dueDate || '' });
     setShowActionForm(true);
+  }
+
+  function openEvidenceForm() {
+    setEvidenceError('');
+    setEvidenceForm({ ...emptyEvidence, id: createEvidenceId(evidence), evidenceDate: todayISO() });
+    setShowEvidenceForm(true);
   }
 
   function openEditActionForm(action) {
@@ -291,6 +332,101 @@ export default function GrievanceDetail() {
     persistMapItem(ACTIONS_KEY, g.id, updatedActions);
     setShowActionForm(false);
     setEditingActionId(null);
+  }
+
+
+
+  async function saveEvidence(e) {
+    e.preventDefault();
+    if (!g) return;
+    setEvidenceError('');
+    const file = evidenceForm.file;
+    if (!file) {
+      setEvidenceError('Please choose a file to upload.');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setEvidenceError('Starter mode limit: maximum file size is 10 MB per file.');
+      return;
+    }
+
+    setEvidenceBusy(true);
+    try {
+      const evidenceId = evidenceForm.id || createEvidenceId(evidence);
+      const storageId = `${g.id}-${evidenceId}-${Date.now()}`;
+      await putEvidenceBlob(storageId, file);
+
+      const record = {
+        id: evidenceId,
+        title: evidenceForm.title.trim() || file.name,
+        category: evidenceForm.category,
+        evidenceDate: evidenceForm.evidenceDate || todayISO(),
+        uploadedBy: evidenceForm.uploadedBy.trim(),
+        linkedActionId: evidenceForm.linkedActionId,
+        description: evidenceForm.description.trim(),
+        fileName: file.name,
+        fileType: file.type || 'application/octet-stream',
+        fileSize: file.size,
+        storageId,
+        createdAt: new Date().toISOString(),
+      };
+
+      const updated = [...evidence, record];
+      setEvidence(updated);
+      persistMapItem(EVIDENCE_KEY, g.id, updated);
+      setShowEvidenceForm(false);
+      setEvidenceForm({ ...emptyEvidence, evidenceDate: todayISO() });
+    } catch (err) {
+      console.error(err);
+      setEvidenceError('Upload could not be saved in this browser. Try a smaller file or another browser.');
+    } finally {
+      setEvidenceBusy(false);
+    }
+  }
+
+  async function openEvidenceFile(item) {
+    try {
+      const blob = await getEvidenceBlob(item.storageId);
+      if (!blob) {
+        alert('The file is not available in this browser. It may have been created on another device or browser.');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      alert('Unable to open this evidence file.');
+    }
+  }
+
+  async function downloadEvidenceFile(item) {
+    try {
+      const blob = await getEvidenceBlob(item.storageId);
+      if (!blob) {
+        alert('The file is not available in this browser.');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = item.fileName || item.title || 'evidence';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    } catch {
+      alert('Unable to download this evidence file.');
+    }
+  }
+
+  async function deleteEvidence(item) {
+    if (!confirm(`Delete evidence ${item.id} — ${item.title}?`)) return;
+    try {
+      await deleteEvidenceBlob(item.storageId);
+    } catch {}
+    const updated = evidence.filter(x => x.id !== item.id);
+    setEvidence(updated);
+    persistMapItem(EVIDENCE_KEY, g.id, updated);
   }
 
   if (!loaded && !g) return <div className="page-wrap"><p>Loading case...</p></div>;
@@ -426,8 +562,69 @@ export default function GrievanceDetail() {
       </section>
 
       <section className="panel">
-        <div className="panel-head"><div><h2>Evidence & Documents</h2><p>Photos, letters, maps, minutes</p></div></div>
-        <div className="empty-state">Evidence upload will be activated after the Action Plan stage.</div>
+        <div className="panel-head evidence-panel-head">
+          <div><h2>Evidence & Documents</h2><p>Photos, letters, maps, minutes and corrective-action proof</p></div>
+          <button className="primary-btn" onClick={openEvidenceForm}>+ Upload Evidence</button>
+        </div>
+
+        <div className="action-summary evidence-summary">
+          <MiniStat label="Total Files" value={evidence.length} />
+          <MiniStat label="Linked to Action" value={evidenceStats.linked} />
+          <MiniStat label="Storage" value={formatBytes(evidenceStats.totalBytes)} />
+          <MiniStat label="Latest" value={evidenceStats.latest ? formatShortDate(evidenceStats.latest.evidenceDate) : '-'} />
+        </div>
+
+        {evidence.length ? (
+          <div className="table-wrap evidence-table-wrap">
+            <table className="evidence-table">
+              <thead>
+                <tr>
+                  <th>Evidence ID</th>
+                  <th>Document / Evidence</th>
+                  <th>Category</th>
+                  <th>Evidence Date</th>
+                  <th>Linked Action</th>
+                  <th>Uploaded By</th>
+                  <th>File</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {evidence.map(item => (
+                  <tr key={item.id}>
+                    <td><strong>{item.id}</strong></td>
+                    <td className="evidence-title">
+                      <strong>{item.title}</strong>
+                      <div className="muted">{item.description || 'No description'}</div>
+                    </td>
+                    <td><span className="category-chip">{item.category}</span></td>
+                    <td>{item.evidenceDate || '-'}</td>
+                    <td>{item.linkedActionId || '-'}</td>
+                    <td>{item.uploadedBy || '-'}</td>
+                    <td>
+                      <div className="file-cell">
+                        <strong>{item.fileName}</strong>
+                        <span>{formatBytes(item.fileSize)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button className="view-btn" onClick={() => openEvidenceFile(item)}>View</button>
+                        <button className="view-btn" onClick={() => downloadEvidenceFile(item)}>Download</button>
+                        <button className="danger-btn" onClick={() => deleteEvidence(item)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state action-empty">
+            <div><strong>No evidence uploaded yet.</strong><p>Upload photos, PDFs, meeting minutes, letters, maps or proof of corrective action.</p></div>
+          </div>
+        )}
+        <div className="starter-warning">Starter mode: file metadata is stored in Local Storage and the actual file is stored in this browser's IndexedDB. Files are not shared with other devices yet.</div>
       </section>
 
       {showUpdateForm && (
@@ -508,6 +705,42 @@ export default function GrievanceDetail() {
           </form>
         </Modal>
       )}
+
+
+      {showEvidenceForm && (
+        <Modal onClose={() => !evidenceBusy && setShowEvidenceForm(false)} title="Upload Evidence" subtitle={`${g.id} — register supporting evidence and attach the file.`} wide>
+          <form onSubmit={saveEvidence}>
+            <div className="form-grid">
+              <Field label="Evidence ID"><input value={evidenceForm.id} readOnly className="readonly-input" /></Field>
+              <Field label="Evidence Date *"><input required type="date" value={evidenceForm.evidenceDate} onChange={e=>updateEvidenceForm('evidenceDate', e.target.value)} /></Field>
+              <Field label="Evidence Title *" wide><input required value={evidenceForm.title} onChange={e=>updateEvidenceForm('title', e.target.value)} placeholder="e.g. Minutes of stakeholder meeting" /></Field>
+              <Field label="Category">
+                <select value={evidenceForm.category} onChange={e=>updateEvidenceForm('category', e.target.value)}>
+                  {['Meeting Minutes','Photo / Field Evidence','Letter / Correspondence','Map / Spatial Data','Permit / Legal Document','Corrective Action Proof','Investigation Report','Other'].map(v=><option key={v}>{v}</option>)}
+                </select>
+              </Field>
+              <Field label="Linked Action">
+                <select value={evidenceForm.linkedActionId} onChange={e=>updateEvidenceForm('linkedActionId', e.target.value)}>
+                  <option value="">Not linked to an action</option>
+                  {actions.map(action => <option key={action.id} value={action.id}>{action.id} — {action.description.slice(0,60)}</option>)}
+                </select>
+              </Field>
+              <Field label="Uploaded By"><input value={evidenceForm.uploadedBy} onChange={e=>updateEvidenceForm('uploadedBy', e.target.value)} placeholder="Person / team" /></Field>
+              <Field label="File *">
+                <input required type="file" onChange={e=>updateEvidenceForm('file', e.target.files?.[0] || null)} />
+                <small className="field-help">Maximum 10 MB in starter mode.</small>
+              </Field>
+              <Field label="Description / Notes" wide><textarea rows="3" value={evidenceForm.description} onChange={e=>updateEvidenceForm('description', e.target.value)} placeholder="What does this evidence prove or support?" /></Field>
+            </div>
+            {evidenceError ? <div className="form-error">{evidenceError}</div> : null}
+            <StarterWarning text="Starter mode: the selected file stays only in this browser. Supabase Storage will make evidence shared and centrally managed later." />
+            <div className="form-actions">
+              <button type="button" className="secondary-btn" disabled={evidenceBusy} onClick={() => setShowEvidenceForm(false)}>Cancel</button>
+              <button type="submit" className="primary-btn" disabled={evidenceBusy}>{evidenceBusy ? 'Saving...' : 'Upload Evidence'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -575,6 +808,82 @@ function createActionId(actions) {
     return Number.isFinite(n) ? Math.max(highest, n) : highest;
   }, 0);
   return `ACT-${String(max + 1).padStart(3, '0')}`;
+}
+
+
+
+function createEvidenceId(items) {
+  const max = items.reduce((highest, item) => {
+    const n = Number(String(item.id || '').replace(/\D/g, ''));
+    return Number.isFinite(n) ? Math.max(highest, n) : highest;
+  }, 0);
+  return `EVD-${String(max + 1).padStart(3, '0')}`;
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (!n) return '0 KB';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatShortDate(value) {
+  if (!value) return '-';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+function openEvidenceDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB is not supported'));
+      return;
+    }
+    const request = indexedDB.open(EVIDENCE_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EVIDENCE_STORE)) {
+        db.createObjectStore(EVIDENCE_STORE, { keyPath: 'storageId' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function putEvidenceBlob(storageId, file) {
+  const db = await openEvidenceDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(EVIDENCE_STORE, 'readwrite');
+    tx.objectStore(EVIDENCE_STORE).put({ storageId, blob: file, fileName: file.name, fileType: file.type, savedAt: new Date().toISOString() });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function getEvidenceBlob(storageId) {
+  if (!storageId) return null;
+  const db = await openEvidenceDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(EVIDENCE_STORE, 'readonly');
+    const request = tx.objectStore(EVIDENCE_STORE).get(storageId);
+    request.onsuccess = () => resolve(request.result?.blob || null);
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => db.close();
+  });
+}
+
+async function deleteEvidenceBlob(storageId) {
+  if (!storageId) return;
+  const db = await openEvidenceDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(EVIDENCE_STORE, 'readwrite');
+    tx.objectStore(EVIDENCE_STORE).delete(storageId);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
 }
 
 function normalizeInputDate(value) {
