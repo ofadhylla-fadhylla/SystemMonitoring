@@ -18,6 +18,8 @@ export default function AuditMonitoring() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editingReport, setEditingReport] = useState(null);
   const [form, setForm] = useState({ ...emptyForm, startDate: todayISO() });
   const [saving, setSaving] = useState(false);
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -94,25 +96,77 @@ export default function AuditMonitoring() {
   }
 
   function openNew() {
+    setEditingId(null);
+    setEditingReport(null);
     setForm({ ...emptyForm, startDate: todayISO() });
     setShowForm(true);
+  }
+
+  function openEdit(audit) {
+    setEditingId(audit.id);
+    setEditingReport({
+      path: audit.report_storage_path || null,
+      name: audit.report_file_name || null,
+      size: audit.report_file_size || null,
+      mime: audit.report_mime_type || null,
+      title: audit.report_title || null,
+    });
+    setForm({
+      companyId: audit.company_id || '',
+      siteId: audit.site_id || '',
+      certificationId: audit.certification_id || '',
+      auditType: audit.audit_type || 'External Audit',
+      title: audit.title || '',
+      startDate: audit.start_date || todayISO(),
+      endDate: audit.end_date || audit.start_date || '',
+      status: audit.status || 'Planned',
+      auditor: audit.auditor || '',
+      companion: audit.companion || '',
+      certificationBody: audit.certification_body || '',
+      notes: audit.notes || '',
+      reportTitle: audit.report_title || '',
+      file: null,
+    });
+    setShowForm(true);
+  }
+
+  async function deleteAudit(audit) {
+    if (!supabase || !audit) return;
+    const label = `${audit.title || 'Audit'} (${formatDate(audit.start_date)}${audit.end_date && audit.end_date !== audit.start_date ? ` – ${formatDate(audit.end_date)}` : ''})`;
+    const ok = window.confirm(`Delete ${label}?\n\nThis removes the audit from the calendar and audit history. This action cannot be undone.`);
+    if (!ok) return;
+    setError('');
+    const { error: deleteError } = await supabase.from('audit_events').delete().eq('id', audit.id);
+    if (deleteError) { setError(deleteError.message); return; }
+    if (audit.report_storage_path) {
+      const { error: storageError } = await supabase.storage.from('audit-reports').remove([audit.report_storage_path]);
+      if (storageError) setError(`Audit deleted, but report cleanup failed: ${storageError.message}`);
+    }
+    if (editingId === audit.id) { setShowForm(false); setEditingId(null); setEditingReport(null); }
+    await loadAll();
   }
 
   async function saveAudit(e) {
     e.preventDefault(); if (!supabase) return;
     setSaving(true); setError('');
-    let reportPath = null, reportName = null, reportSize = null, reportMime = null;
+    let reportPath = editingReport?.path || null;
+    let reportName = editingReport?.name || null;
+    let reportSize = editingReport?.size || null;
+    let reportMime = editingReport?.mime || null;
+    let newUploadPath = null;
+    const previousReportPath = editingReport?.path || null;
     const file = form.file;
     if (file) {
       if (file.size > MAX_REPORT_BYTES) { setError('Audit report maximum file size is 20 MB.'); setSaving(false); return; }
       reportName = file.name; reportSize = file.size; reportMime = file.type || null;
       const code = companyMap[form.companyId]?.company_code || 'COMPANY';
       reportPath = `${code}/${Date.now()}-${sanitizeFileName(file.name)}`;
+      newUploadPath = reportPath;
       const { error: uploadError } = await supabase.storage.from('audit-reports').upload(reportPath, file, { upsert: false, contentType: file.type || undefined });
       if (uploadError) { setError(`${uploadError.message}. Check the private audit-reports bucket and Storage policies.`); setSaving(false); return; }
     }
 
-    const { error: insertError } = await supabase.from('audit_events').insert({
+    const payload = {
       company_id: form.companyId,
       site_id: form.siteId || null,
       certification_id: form.certificationId || null,
@@ -125,17 +179,27 @@ export default function AuditMonitoring() {
       companion: form.companion.trim() || null,
       certification_body: form.certificationBody.trim() || null,
       notes: form.notes.trim() || null,
-      report_title: form.reportTitle.trim() || (file ? file.name : null),
+      report_title: form.reportTitle.trim() || (file ? file.name : editingReport?.title || null),
       report_file_name: reportName,
       report_storage_path: reportPath,
       report_file_size: reportSize,
       report_mime_type: reportMime,
-    });
-    if (insertError) {
-      if (reportPath) await supabase.storage.from('audit-reports').remove([reportPath]);
-      setError(insertError.message); setSaving(false); return;
+    };
+
+    const result = editingId
+      ? await supabase.from('audit_events').update(payload).eq('id', editingId)
+      : await supabase.from('audit_events').insert(payload);
+
+    if (result.error) {
+      if (newUploadPath) await supabase.storage.from('audit-reports').remove([newUploadPath]);
+      setError(result.error.message); setSaving(false); return;
     }
-    setShowForm(false); setSaving(false); await loadAll();
+
+    if (editingId && newUploadPath && previousReportPath && previousReportPath !== newUploadPath) {
+      await supabase.storage.from('audit-reports').remove([previousReportPath]);
+    }
+
+    setShowForm(false); setEditingId(null); setEditingReport(null); setSaving(false); await loadAll();
   }
 
   async function openReport(audit) {
@@ -177,7 +241,7 @@ export default function AuditMonitoring() {
             return <div className={`calendar-cell audit-calendar-cell ${iso===todayISO()?'today':''}`} key={iso}>
               <div className="calendar-day audit-calendar-day">{cell.date.getDate()}</div>
               <div className="calendar-events audit-calendar-events">
-                {events.slice(0,3).map(ev=><div key={ev.key} className={`calendar-event audit-calendar-event ${ev.kind} ${ev.rangePosition ? `range-${ev.rangePosition}` : ''}`} title={`${ev.title} — ${ev.subtitle}`}>
+                {events.slice(0,3).map(ev=><div key={ev.key} className={`calendar-event audit-calendar-event ${ev.kind} ${ev.kind==='audit'?'clickable':''} ${ev.rangePosition ? `range-${ev.rangePosition}` : ''}`} title={`${ev.title} — ${ev.subtitle}${ev.kind==='audit' ? ' · click to edit' : ''}`} onClick={()=>ev.kind==='audit'&&openEdit(ev.row)}>
                   <strong>{ev.title}</strong>
                   <span>{companyMap[ev.companyId]?.company_code || ''}</span>
                   {ev.kind==='audit' && ev.rangePosition && ev.rangePosition!=='single' ? <span className="audit-calendar-range-label">{ev.rangePosition==='start'?'Start':ev.rangePosition==='end'?'End':'Continues'}</span> : null}
@@ -192,14 +256,15 @@ export default function AuditMonitoring() {
       <section className="two-col audit-lists">
         <div className="panel">
           <div className="panel-head"><div><h2>Upcoming Audits</h2><p>Planned and confirmed audit schedule.</p></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Date</th><th>Company</th><th>Audit</th><th>Auditor</th><th>Status</th><th>Report</th></tr></thead><tbody>
-            {loading ? <tr><td colSpan="6" className="empty-cell">Loading audits…</td></tr> : upcomingAudits.length ? upcomingAudits.map(a=><tr key={a.id}>
+          <div className="table-wrap"><table><thead><tr><th>Date</th><th>Company</th><th>Audit</th><th>Auditor</th><th>Status</th><th>Report</th><th>Actions</th></tr></thead><tbody>
+            {loading ? <tr><td colSpan="7" className="empty-cell">Loading audits…</td></tr> : upcomingAudits.length ? upcomingAudits.map(a=><tr key={a.id}>
               <td><strong>{formatDate(a.start_date)}</strong><div className="muted">{a.end_date && a.end_date!==a.start_date ? `to ${formatDate(a.end_date)}` : ''}</div></td>
               <td>{companyMap[a.company_id]?.company_code || '-'}<div className="muted">{siteMap[a.site_id]?.site_name || 'Company level'}</div></td>
               <td>{a.title}<div className="muted">{a.audit_type}{a.certification_id ? ` · ${certMap[a.certification_id]?.standard || ''}` : ''}</div></td>
               <td>{a.auditor || '-'}</td><td><span className="status-pill">{a.status}</span></td>
               <td>{a.report_storage_path ? <button className="view-btn" onClick={()=>openReport(a)}>View</button> : '-'}</td>
-            </tr>) : <tr><td colSpan="6" className="empty-cell">No upcoming audit yet. Use + Add Audit.</td></tr>}
+              <td><div className="table-actions"><button className="view-btn" onClick={()=>openEdit(a)}>Edit</button><button className="danger-btn compact" onClick={()=>deleteAudit(a)}>Delete</button></div></td>
+            </tr>) : <tr><td colSpan="7" className="empty-cell">No upcoming audit yet. Use + Add Audit.</td></tr>}
           </tbody></table></div>
         </div>
         <div className="panel">
@@ -211,7 +276,7 @@ export default function AuditMonitoring() {
       </section>
 
       {showForm && <div className="modal-backdrop" onMouseDown={()=>!saving&&setShowForm(false)}><div className="modal-card wide-modal" onMouseDown={e=>e.stopPropagation()}>
-        <div className="modal-head"><div><h2>Add Audit Schedule</h2><p>Link an audit to a certification so its validity and audit history stay synchronized.</p></div><button className="icon-btn" onClick={()=>setShowForm(false)} disabled={saving}>×</button></div>
+        <div className="modal-head"><div><h2>{editingId ? 'Edit Audit Schedule' : 'Add Audit Schedule'}</h2><p>{editingId ? 'Update the audit schedule, participants, status or report.' : 'Link an audit to a certification so its validity and audit history stay synchronized.'}</p></div><button className="icon-btn" onClick={()=>setShowForm(false)} disabled={saving}>×</button></div>
         <form onSubmit={saveAudit}><div className="form-grid">
           <Field label="Company *"><select required value={form.companyId} onChange={e=>updateForm('companyId',e.target.value)}><option value="">Select company…</option>{companies.filter(c=>c.status==='Active').map(c=><option key={c.id} value={c.id}>{c.company_code} — {c.company_name}</option>)}</select></Field>
           <Field label="Site / Unit"><select value={form.siteId} onChange={e=>updateForm('siteId',e.target.value)}><option value="">Company level</option>{sites.filter(s=>s.company_id===form.companyId&&s.status==='Active').map(s=><option key={s.id} value={s.id}>{s.site_name} ({s.site_type})</option>)}</select></Field>
@@ -227,8 +292,8 @@ export default function AuditMonitoring() {
           <Field label="Report Title"><input value={form.reportTitle} onChange={e=>updateForm('reportTitle',e.target.value)} placeholder="Audit report / closing report" /></Field>
           {selectedCert ? <div className="cert-sync-box form-field wide"><span>Certification Sync</span><strong>{selectedCert.standard} · expires {formatDate(selectedCert.valid_until)}</strong><small>{selectedCert.valid_until ? `${daysUntil(selectedCert.valid_until)} days from today` : 'No expiry date recorded'}</small></div> : null}
           <Field label="Audit Notes" wide><textarea rows="4" value={form.notes} onChange={e=>updateForm('notes',e.target.value)} /></Field>
-          <Field label="Audit Report" wide><input type="file" accept=".pdf,.docx,.xlsx,image/jpeg,image/png,image/webp" onChange={e=>updateForm('file',e.target.files?.[0]||null)} /><small className="field-help">Optional. Private Supabase Storage, maximum 20 MB.</small></Field>
-        </div><div className="form-actions"><button type="button" className="secondary-btn" onClick={()=>setShowForm(false)} disabled={saving}>Cancel</button><button className="primary-btn" disabled={saving}>{saving?'Saving…':'Save Audit to Calendar'}</button></div></form>
+          <Field label={editingId ? 'Replace Audit Report' : 'Audit Report'} wide><input type="file" accept=".pdf,.docx,.xlsx,image/jpeg,image/png,image/webp" onChange={e=>updateForm('file',e.target.files?.[0]||null)} /><small className="field-help">{editingId && editingReport?.name ? `Current: ${editingReport.name}. Leave empty to keep the current file.` : 'Optional. Private Supabase Storage, maximum 20 MB.'}</small></Field>
+        </div><div className="form-actions">{editingId ? <button type="button" className="danger-btn" onClick={()=>deleteAudit(audits.find(a=>a.id===editingId))} disabled={saving}>Delete Audit</button> : <span></span>}<div className="form-action-right"><button type="button" className="secondary-btn" onClick={()=>setShowForm(false)} disabled={saving}>Cancel</button><button className="primary-btn" disabled={saving}>{saving?'Saving…':editingId?'Save Changes':'Save Audit to Calendar'}</button></div></div></form>
       </div></div>}
     </div>
   );

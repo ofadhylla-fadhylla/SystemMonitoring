@@ -1,12 +1,8 @@
-# System Monitoring V8.2 — Audit Calendar Layout Fix
+# System Monitoring V8.3 — Edit & Delete
 
-This patch restores the 7-column monthly calendar layout and keeps multi-day audits visible on every date from Start Date through End Date.
+Adds:
+- Audit Monitoring: edit from calendar or table, delete audit, replace audit report while editing.
+- Certification Monitoring: edit and delete controls.
+- Deleting a certification keeps existing audit rows (certification_id becomes null) because the database FK uses ON DELETE SET NULL.
 
-Upload these paths to the existing GitHub repository:
-
-- `app/audits/page.js`
-- `app/globals.css`
-
-Commit message suggestion: `Fix audit calendar layout and multi-day range`
-
-No SQL changes are required. Existing audit records remain in Supabase.
+No SQL changes are required. Upload the `app` folder to GitHub and commit.

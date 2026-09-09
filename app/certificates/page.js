@@ -128,6 +128,18 @@ export default function CertificationMonitoring() {
     await loadAll();
   }
 
+  async function deleteCertification(row) {
+    if (!supabase || !row) return;
+    const company = companyMap[row.company_id]?.company_code || 'Company';
+    const ok = window.confirm(`Delete ${row.standard} certification for ${company}?\n\nThe certificate expiry will disappear from Audit Monitoring. Existing audit records will be kept, but their certification link will become empty.`);
+    if (!ok) return;
+    setError('');
+    const { error: deleteError } = await supabase.from('certifications').delete().eq('id', row.id);
+    if (deleteError) { setError(deleteError.message); return; }
+    if (editingId === row.id) { setShowForm(false); setEditingId(null); setForm(emptyForm); }
+    await loadAll();
+  }
+
   async function openReport(audit) {
     if (!audit?.report_storage_path || !supabase) return;
     const { data, error: signError } = await supabase.storage.from('audit-reports').createSignedUrl(audit.report_storage_path, 60);
@@ -212,7 +224,7 @@ export default function CertificationMonitoring() {
         </div>
         <div className="table-wrap">
           <table className="cert-table">
-            <thead><tr><th>Company / Site</th><th>Standard</th><th>Certificate No.</th><th>Status</th><th>Valid Until</th><th>Certification Body</th><th>Scope / Product</th><th></th></tr></thead>
+            <thead><tr><th>Company / Site</th><th>Standard</th><th>Certificate No.</th><th>Status</th><th>Valid Until</th><th>Certification Body</th><th>Scope / Product</th><th>Actions</th></tr></thead>
             <tbody>
               {loading ? <tr><td colSpan="8" className="empty-cell">Loading certifications…</td></tr> : filtered.length ? filtered.map(c => {
                 const exp = expiryState(c.valid_until, displayStatus(c));
@@ -224,7 +236,7 @@ export default function CertificationMonitoring() {
                   <td>{formatDate(c.valid_until)}<div><span className={`expiry-chip ${exp.tone}`}>{exp.label}</span></div></td>
                   <td>{c.certification_body || '-'}</td>
                   <td>{c.scope || '-'}<div className="muted">{c.product || ''}</div></td>
-                  <td><button className="view-btn" onClick={() => openEdit(c)}>Edit</button></td>
+                  <td><div className="table-actions"><button className="view-btn" onClick={() => openEdit(c)}>Edit</button><button className="danger-btn compact" onClick={() => deleteCertification(c)}>Delete</button></div></td>
                 </tr>;
               }) : <tr><td colSpan="8" className="empty-cell">No certification record yet. Add a company in Master Data, then add a certification.</td></tr>}
             </tbody>
@@ -252,7 +264,7 @@ export default function CertificationMonitoring() {
                 <Field label="Scope"><input value={form.scope} onChange={e=>updateForm('scope', e.target.value)} placeholder="Estate, Mill, KCP…" /></Field>
                 <Field label="Remarks" wide><textarea value={form.remarks} onChange={e=>updateForm('remarks', e.target.value)} rows="4" /></Field>
               </div>
-              <div className="form-actions"><button type="button" className="secondary-btn" onClick={()=>setShowForm(false)} disabled={saving}>Cancel</button><button className="primary-btn" disabled={saving}>{saving ? 'Saving…' : 'Save Certification'}</button></div>
+              <div className="form-actions">{editingId ? <button type="button" className="danger-btn" onClick={()=>deleteCertification(certifications.find(c=>c.id===editingId))} disabled={saving}>Delete Certification</button> : <span></span>}<div className="form-action-right"><button type="button" className="secondary-btn" onClick={()=>setShowForm(false)} disabled={saving}>Cancel</button><button className="primary-btn" disabled={saving}>{saving ? 'Saving…' : editingId ? 'Save Changes' : 'Save Certification'}</button></div></div>
             </form>
           </div>
         </div>
