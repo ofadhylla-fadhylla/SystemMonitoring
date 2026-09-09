@@ -1,0 +1,1 @@
+export default function Page(){return <div className="page-wrap"><div className="page-heading"><div><h1>Certificates</h1><p>This module is ready as a placeholder for the next development stage.</p></div></div><div className="panel"><div className="empty-state">Module shell created. Data and workflows will be added after the grievance foundation is approved.</div></div></div>}
