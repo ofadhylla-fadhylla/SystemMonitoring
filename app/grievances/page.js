@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { grievances as seedGrievances } from '../../data/grievances';
 
 const STORAGE_KEY = 'sm_custom_grievances';
+const OVERRIDES_KEY = 'sm_grievance_overrides';
 
 const emptyForm = {
   company: '',
@@ -24,6 +25,7 @@ const emptyForm = {
 
 export default function GrievanceTracker() {
   const [customGrievances, setCustomGrievances] = useState([]);
+  const [overrides, setOverrides] = useState({});
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
   const [risk, setRisk] = useState('All');
@@ -37,11 +39,18 @@ export default function GrievanceTracker() {
     } catch {
       setCustomGrievances([]);
     }
+
+    try {
+      const savedOverrides = JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}');
+      if (savedOverrides && typeof savedOverrides === 'object') setOverrides(savedOverrides);
+    } catch {
+      setOverrides({});
+    }
   }, []);
 
   const grievances = useMemo(
-    () => [...customGrievances, ...seedGrievances],
-    [customGrievances]
+    () => [...customGrievances, ...seedGrievances].map(g => ({ ...g, ...(overrides[g.id] || {}) })),
+    [customGrievances, overrides]
   );
 
   const filtered = useMemo(() => grievances.filter(g => {

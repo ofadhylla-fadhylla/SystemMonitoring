@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { grievances as seedGrievances } from '../data/grievances';
 
 const STORAGE_KEY = 'sm_custom_grievances';
+const OVERRIDES_KEY = 'sm_grievance_overrides';
 
 export default function Dashboard() {
   const [customGrievances, setCustomGrievances] = useState([]);
+  const [overrides, setOverrides] = useState({});
 
   useEffect(() => {
     try {
@@ -16,9 +18,20 @@ export default function Dashboard() {
     } catch {
       setCustomGrievances([]);
     }
+
+    try {
+      const savedOverrides = JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}');
+      if (savedOverrides && typeof savedOverrides === 'object') setOverrides(savedOverrides);
+    } catch {
+      setOverrides({});
+    }
   }, []);
 
-  const grievances = useMemo(() => [...customGrievances, ...seedGrievances], [customGrievances]);
+  const grievances = useMemo(
+    () => [...customGrievances, ...seedGrievances].map(g => ({ ...g, ...(overrides[g.id] || {}) })),
+    [customGrievances, overrides]
+  );
+
   const open = grievances.filter(g => g.status !== 'Closed').length;
   const high = grievances.filter(g => g.risk === 'High' && g.status !== 'Closed').length;
   const closed = grievances.filter(g => g.status === 'Closed').length;
