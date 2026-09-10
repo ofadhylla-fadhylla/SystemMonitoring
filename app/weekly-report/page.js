@@ -68,6 +68,10 @@ export default function WeeklyReport() {
       progress_en: entryForm.progressEn.trim(),
       sort_order: Number(entryForm.sortOrder || 1),
     };
+    if (entryForm.id) {
+      payload.source_module = null;
+      payload.source_reference = null;
+    }
     const result = entryForm.id
       ? await supabase.from('weekly_report_entries').update(payload).eq('id', entryForm.id)
       : await supabase.from('weekly_report_entries').insert(payload);
@@ -102,6 +106,10 @@ export default function WeeklyReport() {
       explanation: planForm.explanation.trim() || null,
       sort_order: Number(planForm.sortOrder || 1),
     };
+    if (planForm.id) {
+      payload.source_module = null;
+      payload.source_reference = null;
+    }
     const result = planForm.id
       ? await supabase.from('weekly_ispo_plans').update(payload).eq('id', planForm.id)
       : await supabase.from('weekly_ispo_plans').insert(payload);
@@ -169,6 +177,66 @@ export default function WeeklyReport() {
       const companyMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const siteMap = Object.fromEntries(sites.map(s => [s.id, s]));
       const certMap = Object.fromEntries(certifications.map(c => [c.id, c]));
+
+      // Rebuild only system-generated/carry-forward rows. User-edited rows become manual and are preserved.
+      const { error: clearAutoError } = await supabase
+        .from('weekly_report_entries')
+        .delete()
+        .eq('report_date', reportDate)
+        .in('source_module', ['audit_events', 'certifications', 'grievances', 'carry_forward']);
+      if (clearAutoError) throw clearAutoError;
+      const { error: clearPlanError } = await supabase
+        .from('weekly_ispo_plans')
+        .delete()
+        .eq('report_date', reportDate)
+        .in('source_module', ['audit_events', 'carry_forward']);
+      if (clearPlanError) throw clearPlanError;
+
+      let carryRows = [];
+      let carryPlans = [];
+      let baselineDate = '';
+      const [currentRowsRes, currentPlansRes] = await Promise.all([
+        supabase.from('weekly_report_entries').select('*').eq('report_date', reportDate),
+        supabase.from('weekly_ispo_plans').select('*').eq('report_date', reportDate),
+      ]);
+      if (currentRowsRes.error || currentPlansRes.error) throw (currentRowsRes.error || currentPlansRes.error);
+
+      // If this week has no manually maintained baseline, carry forward the latest available report.
+      if (!(currentRowsRes.data || []).length && !(currentPlansRes.data || []).length) {
+        const [prevEntryDateRes, prevPlanDateRes] = await Promise.all([
+          supabase.from('weekly_report_entries').select('report_date').lt('report_date', reportDate).order('report_date', { ascending: false }).limit(1),
+          supabase.from('weekly_ispo_plans').select('report_date').lt('report_date', reportDate).order('report_date', { ascending: false }).limit(1),
+        ]);
+        if (prevEntryDateRes.error || prevPlanDateRes.error) throw (prevEntryDateRes.error || prevPlanDateRes.error);
+        const candidates = [prevEntryDateRes.data?.[0]?.report_date, prevPlanDateRes.data?.[0]?.report_date].filter(Boolean).sort();
+        baselineDate = candidates.length ? candidates[candidates.length - 1] : '';
+        if (baselineDate) {
+          const [prevEntriesRes, prevPlansRes] = await Promise.all([
+            supabase.from('weekly_report_entries').select('*').eq('report_date', baselineDate).order('section').order('sort_order'),
+            supabase.from('weekly_ispo_plans').select('*').eq('report_date', baselineDate).order('sort_order'),
+          ]);
+          if (prevEntriesRes.error || prevPlansRes.error) throw (prevEntriesRes.error || prevPlansRes.error);
+          const entryPayload = (prevEntriesRes.data || []).map(({ id, entry_id, created_at, updated_at, ...r }) => ({
+            ...r, report_date: reportDate, source_module: 'carry_forward', source_reference: `report:${baselineDate}:${id}`,
+          }));
+          const planPayload = (prevPlansRes.data || []).map(({ id, plan_id, created_at, updated_at, ...r }) => ({
+            ...r, report_date: reportDate, source_module: 'carry_forward', source_reference: `report:${baselineDate}:${id}`,
+          }));
+          if (entryPayload.length) {
+            const { data, error } = await supabase.from('weekly_report_entries').insert(entryPayload).select('*');
+            if (error) throw error;
+            carryRows = data || [];
+          }
+          if (planPayload.length) {
+            const { data, error } = await supabase.from('weekly_ispo_plans').insert(planPayload).select('*');
+            if (error) throw error;
+            carryPlans = data || [];
+          }
+        }
+      } else {
+        carryRows = currentRowsRes.data || [];
+        carryPlans = currentPlansRes.data || [];
+      }
 
       const generated = [];
       const reportAudits = audits.filter(a => {
@@ -266,14 +334,27 @@ export default function WeeklyReport() {
         });
       }
 
-      const { error: deleteAutoError } = await supabase
-        .from('weekly_report_entries')
-        .delete()
-        .eq('report_date', reportDate)
-        .in('source_module', ['audit_events', 'certifications', 'grievances']);
-      if (deleteAutoError) throw deleteAutoError;
-      if (generated.length) {
-        const { error: insertAutoError } = await supabase.from('weekly_report_entries').insert(generated);
+      // Merge live Audit/Certification progress into carried rows when the unit is already represented.
+      const rowsToInsert = [];
+      for (const row of generated) {
+        const match = PROGRESS_SECTIONS.includes(row.section)
+          ? carryRows.find(r => r.section === row.section && unitSubsetMatch(row.unit, r.unit))
+          : null;
+        if (match) {
+          const { error: updateError } = await supabase.from('weekly_report_entries').update({
+            stage: row.stage || match.stage,
+            progress_id: row.progress_id,
+            progress_en: row.progress_en,
+            source_module: row.source_module,
+            source_reference: row.source_reference,
+          }).eq('id', match.id);
+          if (updateError) throw updateError;
+        } else {
+          rowsToInsert.push(row);
+        }
+      }
+      if (rowsToInsert.length) {
+        const { error: insertAutoError } = await supabase.from('weekly_report_entries').insert(rowsToInsert);
         if (insertAutoError) throw insertAutoError;
       }
 
@@ -293,22 +374,35 @@ export default function WeeklyReport() {
         if (type.includes('stage ii') || type.includes('stage 2')) p.stage2 = weekOfMonthLabel(a.start_date);
         else p.stage1 = weekOfMonthLabel(a.start_date);
       }
-      const { error: delPlanError } = await supabase
-        .from('weekly_ispo_plans').delete().eq('report_date', reportDate).eq('source_module', 'audit_events');
-      if (delPlanError) throw delPlanError;
       const autoPlans = [...planMap.values()].map((p, i) => ({
         report_date: reportDate, pt: p.pt, stage_1: p.stage1 || null, stage_2: p.stage2 || null,
         explanation: 'Audit schedule is synchronized from Audit Monitoring.', sort_order: i + 1,
         source_module: 'audit_events', source_reference: p.refs.join(','),
       }));
-      if (autoPlans.length) {
-        const { error: planInsertError } = await supabase.from('weekly_ispo_plans').insert(autoPlans);
+      const plansToInsert = [];
+      for (const plan of autoPlans) {
+        const match = carryPlans.find(p => normalizePt(p.pt) === normalizePt(plan.pt));
+        if (match) {
+          const { error: planUpdateError } = await supabase.from('weekly_ispo_plans').update({
+            stage_1: plan.stage_1 || match.stage_1,
+            stage_2: plan.stage_2 || match.stage_2,
+            source_module: 'audit_events',
+            source_reference: plan.source_reference,
+          }).eq('id', match.id);
+          if (planUpdateError) throw planUpdateError;
+        } else {
+          plansToInsert.push(plan);
+        }
+      }
+      if (plansToInsert.length) {
+        const { error: planInsertError } = await supabase.from('weekly_ispo_plans').insert(plansToInsert);
         if (planInsertError) throw planInsertError;
       }
 
       await loadReport();
       const sourceCounts = generated.reduce((m,r)=>{m[r.source_module]=(m[r.source_module]||0)+1;return m;},{});
-      setSyncMessage(`Live data synchronized: ${sourceCounts.audit_events||0} audit row(s), ${sourceCounts.certifications||0} certification row(s), ${sourceCounts.grievances||0} grievance row(s), and ${autoPlans.length} ISPO plan row(s). Manual rows are preserved.`);
+      const baselineText = baselineDate ? ` Baseline carried forward from ${formatLongDate(baselineDate)}.` : '';
+      setSyncMessage(`Draft built from real data.${baselineText} Live changes: ${sourceCounts.audit_events||0} audit row(s), ${sourceCounts.certifications||0} certification row(s), ${sourceCounts.grievances||0} grievance row(s), and ${autoPlans.length} ISPO plan update(s). Manual edits are preserved.`);
     } catch (err) {
       setError(err?.message || String(err));
     } finally {
@@ -373,7 +467,7 @@ export default function WeeklyReport() {
   return <div className="page-wrap">
     <div className="page-heading weekly-heading">
       <div><h1>Weekly Progress Report</h1><p>Build the bilingual report from real Certification, Audit and Grievance data already stored in Supabase.</p></div>
-      <div className="detail-actions"><button className="secondary-btn" onClick={syncMonitoringData} disabled={syncing}>{syncing ? 'Building Draft…' : 'Build Draft from Live Data'}</button><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
+      <div className="detail-actions"><button className="secondary-btn" onClick={syncMonitoringData} disabled={syncing}>{syncing ? 'Building Draft…' : 'Build Weekly Draft'}</button><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
     </div>
 
     {error ? <div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div> : <div className="sync-success">● Weekly Report is separate from NDPE Implementation</div>}
@@ -493,6 +587,22 @@ function simpleBilingualTable(rows, section, D) {
   else if (section === 'Grievance') data = [new D.TableRow({ children: [cell('1', D), cell('Tidak terdapat grievance baru.', D), cell('There are no new grievances.', D)] })];
   else data = [new D.TableRow({ children: [cell('1', D), cell('-', D), cell('-', D)] })];
   return new D.Table({ width: { size: 100, type: D.WidthType.PERCENTAGE }, rows: [header, ...data] });
+}
+
+function unitTokens(value) {
+  return String(value || '')
+    .split(',')
+    .map(v => v.trim().toUpperCase())
+    .filter(Boolean)
+    .map(v => v.replace(/^ESTATE\s+/, '').replace(/^P(?=[A-Z]{2,})/, '').replace(/[^A-Z0-9-]/g, ''));
+}
+function unitSubsetMatch(liveValue, baselineValue) {
+  const live = unitTokens(liveValue);
+  const baseline = new Set(unitTokens(baselineValue));
+  return live.length > 0 && live.every(t => baseline.has(t));
+}
+function normalizePt(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^P(?=[A-Z]{2,})/, '');
 }
 
 function sourceLabel(source) {
