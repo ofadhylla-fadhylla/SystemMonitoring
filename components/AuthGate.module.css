@@ -1,0 +1,98 @@
+.centerScreen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f3f7f5;
+  padding: 24px;
+}
+
+.loadingCard,
+.errorCard {
+  width: min(440px, 100%);
+  background: #fff;
+  border: 1px solid #dce7e0;
+  border-radius: 18px;
+  padding: 28px;
+  display: grid;
+  gap: 10px;
+  box-shadow: 0 16px 42px rgba(15, 48, 34, 0.08);
+}
+
+.loadingCard span,
+.errorCard p {
+  color: #64756d;
+  margin: 0;
+}
+
+.logo {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: #d9ff55;
+  color: #082b1c;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.accountArea {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.accountCopy {
+  display: grid;
+  text-align: right;
+  line-height: 1.15;
+}
+
+.accountCopy strong {
+  color: #17382b;
+  font-size: 13px;
+}
+
+.accountCopy span {
+  color: #708179;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.userChip {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d4e1da;
+  background: #eff5f2;
+  color: #0b3322;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.signOutButton {
+  border: 1px solid #d6e2dc;
+  background: #fff;
+  color: #17402f;
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.signOutButton:hover {
+  background: #f2f7f4;
+}
+
+@media (max-width: 900px) {
+  .accountCopy {
+    display: none;
+  }
+
+  .signOutButton {
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+}

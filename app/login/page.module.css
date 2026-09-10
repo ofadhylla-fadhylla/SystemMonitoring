@@ -1,0 +1,208 @@
+.screen {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(440px, 1.1fr);
+  background: #f4f7f5;
+  color: #0b2e20;
+}
+
+.brandPanel {
+  background: #082d1e;
+  color: #fff;
+  padding: clamp(32px, 6vw, 78px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 100vh;
+}
+
+.brandTop {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.logo {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  background: #d9ff55;
+  color: #082d1e;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.brandName {
+  font-weight: 900;
+  letter-spacing: .06em;
+  font-size: 20px;
+}
+
+.brandSub {
+  color: #b6c8bf;
+  letter-spacing: .24em;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.heroCopy {
+  max-width: 560px;
+}
+
+.heroCopy span {
+  color: #d9ff55;
+  font-size: 12px;
+  letter-spacing: .17em;
+  font-weight: 800;
+}
+
+.heroCopy h1 {
+  margin: 14px 0 14px;
+  font-size: clamp(36px, 5vw, 62px);
+  line-height: 1.02;
+  letter-spacing: -.035em;
+}
+
+.heroCopy p {
+  color: #c1d0c9;
+  line-height: 1.65;
+  font-size: 15px;
+  max-width: 500px;
+}
+
+.securityNote {
+  color: #91aaa0;
+  font-size: 12px;
+}
+
+.formPanel {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+
+.card {
+  width: min(480px, 100%);
+  background: #fff;
+  border: 1px solid #dce6e0;
+  border-radius: 22px;
+  padding: 34px;
+  box-shadow: 0 20px 55px rgba(14, 48, 34, .08);
+}
+
+.cardHead span {
+  color: #6e7e76;
+  font-size: 11px;
+  letter-spacing: .14em;
+  font-weight: 800;
+}
+
+.cardHead h2 {
+  margin: 7px 0 7px;
+  font-size: 30px;
+}
+
+.cardHead p {
+  margin: 0 0 26px;
+  color: #708179;
+  line-height: 1.5;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.field > span {
+  font-weight: 800;
+  color: #29483a;
+  font-size: 12px;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  border: 1px solid #cad9d1;
+  border-radius: 11px;
+  padding: 13px 14px;
+  background: #fff;
+  color: #102f22;
+  outline: none;
+  font: inherit;
+}
+
+.field select:focus,
+.field input:focus {
+  border-color: #4f8b6e;
+  box-shadow: 0 0 0 3px rgba(79, 139, 110, .12);
+}
+
+.passwordWrap {
+  display: flex;
+  align-items: stretch;
+}
+
+.passwordWrap input {
+  border-radius: 11px 0 0 11px;
+}
+
+.passwordWrap button {
+  border: 1px solid #cad9d1;
+  border-left: 0;
+  background: #f3f7f5;
+  border-radius: 0 11px 11px 0;
+  padding: 0 13px;
+  color: #274a3a;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.selectedAccount {
+  background: #f3f7f5;
+  border: 1px solid #e0e8e4;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #64766d;
+  font-size: 12px;
+}
+
+.error {
+  margin-top: 14px;
+  background: #fff0ee;
+  border: 1px solid #f0c8c2;
+  color: #9b2f25;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 12px;
+}
+
+.submit {
+  width: 100%;
+  margin-top: 20px;
+  border: 0;
+  border-radius: 11px;
+  padding: 14px 16px;
+  background: #0b3b28;
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.submit:hover { background: #0d4b32; }
+.submit:disabled { opacity: .65; cursor: progress; }
+
+.help {
+  color: #849189;
+  text-align: center;
+  font-size: 11px;
+  margin: 16px 0 0;
+}
+
+@media (max-width: 900px) {
+  .screen { grid-template-columns: 1fr; }
+  .brandPanel { display: none; }
+  .formPanel { min-height: 100vh; }
+}
