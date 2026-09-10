@@ -82,6 +82,23 @@ function certaintyScore(text,max){if(!text)return 0;const t=String(text).toLower
 function paymentScore(text){if(!text)return 0;const t=String(text).toLowerCase();if(includesAny(t,['100% after','setelah sertifikat','after certificate','after completion','setelah selesai','net 45','45 days','net 60','60 days']))return 10;if(includesAny(t,['net 30','30 days','30 hari']))return 9;if(includesAny(t,['30%','20%','40%'])&&includesAny(t,['70%','80%','60%']))return 8;if(includesAny(t,['50%','50/50']))return 7;if(includesAny(t,['100% advance','100% upfront','full payment before','dibayar dimuka','di muka']))return 2;return 6}
 function logisticsScore(v){let score=0;const air=String(v.airlineStandard||'').toLowerCase();if(air){score+=includesAny(air,['economy','ekonomi','standard','standar'])?4:3}score+=certaintyScore(v.lodging,5);score+=certaintyScore(v.landTransport,4);if(v.hoCompanion)score+=2;return Math.round(Math.min(15,score))}
 function dataCompleteness(v){const fields=[v.quotationFinal,v.systemFee,v.travelCost,v.paymentTerms,v.offerValidity,v.airlineStandard,v.lodging,v.landTransport,v.certificateEstimateDays||v.certificateEstimateText,v.contactPerson,v.email];return fields.filter(x=>x!==''&&x!==null&&x!==undefined&&x!==0).length/fields.length}
+function detectPremiumTravelRequirements(v){
+  const air=String(v.airlineStandard||'').toLowerCase();
+  const hotel=String(v.lodging||'').toLowerCase();
+  const land=String(v.landTransport||'').toLowerCase();
+  const remarks=String(v.remarks||'').toLowerCase();
+  const drivers=[];
+  let pressure=0;
+  if(includesAny(air,['garuda','business class','kelas bisnis','premium economy','full service','singapore airlines','qatar','emirates','cathay'])){drivers.push(`persyaratan penerbangan premium/spesifik: ${v.airlineStandard}`);pressure+=2}
+  if(/(?:4|four)\s*(?:star|bintang)/i.test(hotel)||includesAny(hotel,['bintang 4','4-star','4 star','four-star'])){drivers.push(`hotel minimal bintang 4: ${v.lodging}`);pressure+=2}
+  if(/(?:5|five)\s*(?:star|bintang)/i.test(hotel)||includesAny(hotel,['bintang 5','5-star','5 star','five-star','luxury hotel'])){drivers.push(`hotel premium/bintang 5: ${v.lodging}`);pressure+=3}
+  if(includesAny(hotel,['international chain','hotel chain','branded hotel','single occupancy','single room'])){drivers.push(`ketentuan penginapan khusus: ${v.lodging}`);pressure+=1}
+  if(includesAny(land,['private car','mobil khusus','rental khusus','dedicated car','driver khusus','full day car'])){drivers.push(`transport darat khusus: ${v.landTransport}`);pressure+=1}
+  if(includesAny(remarks,['garuda','hotel bintang','4 star','5 star','business class','premium economy'])){drivers.push('terdapat persyaratan perjalanan premium pada remarks');pressure+=1}
+  const travelQuoted=num(v.travelCost)>0;
+  const costUncertain=!travelQuoted && pressure>0 && !includesAny(`${v.lodging} ${v.landTransport} ${v.remarks}`,['include','included','all in','all-in','sudah termasuk','ditanggung vendor']);
+  return{drivers:[...new Set(drivers)],pressure,travelQuoted,costUncertain};
+}
 function scoreAll(vendors){
   if(!vendors.length)return[];
   const totals=vendors.map(allIn).filter(x=>x>0),minTotal=totals.length?Math.min(...totals):0;
@@ -96,8 +113,10 @@ function scoreAll(vendors){
     const payment=paymentScore(v.paymentTerms);
     const saving=initial>0&&final>0?5*Math.min(.15,Math.max(0,(initial-final)/initial))/.15:0;
     const admin=Math.min(10,[v.contactPerson,v.email,v.offerValidity].filter(Boolean).length/3*7+(dataCompleteness(v)>=.8?3:0));
-    const score=Math.round(cost+logistics+speed+ops+payment+saving+admin);
-    return{id:v.id,name:v.vendorName,score,allIn:total,cost:Math.round(cost),logistics:Math.round(logistics),speed:Math.round(speed),ops:Math.round(ops),payment:Math.round(payment),saving:Math.round(saving),admin:Math.round(admin),completeness:dataCompleteness(v)};
+    const travelReq=detectPremiumTravelRequirements(v);
+    const hiddenCostPenalty=travelReq.costUncertain?Math.min(6,travelReq.pressure*2):0;
+    const score=Math.max(0,Math.round(cost+logistics+speed+ops+payment+saving+admin-hiddenCostPenalty));
+    return{id:v.id,name:v.vendorName,score,allIn:total,cost:Math.round(cost),logistics:Math.round(logistics),speed:Math.round(speed),ops:Math.round(ops),payment:Math.round(payment),saving:Math.round(saving),admin:Math.round(admin),completeness:dataCompleteness(v),travelDrivers:travelReq.drivers,hiddenCostPenalty,costUncertain:travelReq.costUncertain};
   }).sort((a,b)=>b.score-a.score||a.allIn-b.allIn)
 }
 function buildPortfolioInsight(recommended,recScore,selected,selectedScore,ranking,all){
@@ -108,6 +127,7 @@ function buildPortfolioInsight(recommended,recScore,selected,selectedScore,ranki
   const cost=allIn(recommended),cheapCost=cheapest?allIn(cheapest):0,delta=cheapCost?cost-cheapCost:0;
   const initial=num(recommended.quotationInitial),final=num(recommended.quotationFinal),savingPct=initial>0&&final>0?Math.max(0,(initial-final)/initial*100):0;
   const strengths=[],risks=[];
+  const premiumTravel=detectPremiumTravelRequirements(recommended);
   if(recScore.cost>=32)strengths.push('biaya total berada sangat dekat dengan penawaran all-in termurah');
   else if(recScore.cost>=27)strengths.push('biaya total masih kompetitif dibanding vendor lain');
   if(savingPct>=5)strengths.push(`negosiasi menurunkan biaya audit sekitar ${savingPct.toFixed(1)}%`);
@@ -116,6 +136,10 @@ function buildPortfolioInsight(recommended,recScore,selected,selectedScore,ranki
   if(recScore.speed>=12)strengths.push('estimasi penerbitan sertifikat termasuk yang cepat');
   if(['Yes','Flexible'].includes(recommended.weekendWork))strengths.push('cukup fleksibel untuk audit Sabtu/Minggu');
   if(!recommended.travelCost&&!includesAny(`${recommended.lodging} ${recommended.landTransport} ${recommended.remarks}`,['include','included','all in','all-in','ditanggung vendor','vendor bear','sudah termasuk']))risks.push('nilai travel/lodging/meals belum jelas sehingga biaya all-in masih berpotensi berubah');
+  if(premiumTravel.drivers.length){
+    if(premiumTravel.costUncertain)risks.push(`terdeteksi cost driver perjalanan premium (${premiumTravel.drivers.join('; ')}) tetapi nilainya belum terkuantifikasi dalam travel cost`);
+    else strengths.push(`persyaratan perjalanan premium/spesifik sudah teridentifikasi: ${premiumTravel.drivers.join('; ')}`);
+  }
   if(!recommended.airlineStandard)risks.push('standar tiket/pesawat auditor belum dikonfirmasi');
   if(!recommended.lodging)risks.push('mekanisme hotel/penginapan auditor belum dikonfirmasi');
   if(!recommended.landTransport)risks.push('transportasi darat auditor belum dikonfirmasi');
@@ -140,6 +164,12 @@ function buildPortfolioInsight(recommended,recScore,selected,selectedScore,ranki
   lines.push(`Transport darat: ${recommended.landTransport||'belum dikonfirmasi'}.`);
   lines.push(`Pendamping HO: ${recommended.hoCompanion||'belum dikonfirmasi'}.`);
   lines.push(`Skor logistics: ${recScore.logistics}/15.`);
+  if(premiumTravel.drivers.length){
+    lines.push(`Cost driver terdeteksi: ${premiumTravel.drivers.join('; ')}.`);
+    lines.push(premiumTravel.costUncertain?`Dampak biaya belum terkuantifikasi. Sistem menganggap ini sebagai risiko hidden cost sampai travel cost dikonfirmasi.`:`Dampak biaya telah dianggap tercermin pada travel/all-in cost yang diinput.`);
+  }else{
+    lines.push('Tidak ada persyaratan perjalanan premium/spesifik yang terdeteksi dari field pesawat, hotel, transport, dan remarks.');
+  }
   lines.push('');
   lines.push('3. WAKTU & OPERASIONAL');
   lines.push(`Estimasi sertifikat: ${recommended.certificateEstimateText|| (recommended.certificateEstimateDays?`${recommended.certificateEstimateDays} hari`:'belum tersedia')}.`);
@@ -161,6 +191,7 @@ function buildPortfolioInsight(recommended,recScore,selected,selectedScore,ranki
   }
   lines.push('');
   lines.push(`KESIMPULAN: Berdasarkan kombinasi biaya, kepastian travel/pesawat/hotel, transport, termin pembayaran, kecepatan sertifikat, dan fleksibilitas operasional, ${recommended.vendorName} adalah pilihan paling seimbang dari data yang tersedia saat ini.`);
+  if(premiumTravel.costUncertain)lines.push('Sebelum keputusan final, minta vendor mengubah persyaratan perjalanan premium menjadi nilai rupiah atau paket all-in agar perbandingan biaya benar-benar apple-to-apple.');
   lines.push('Catatan: recommendation ini adalah decision support. Keputusan final tetap perlu mempertimbangkan kualitas auditor, pengalaman lembaga sertifikasi, conflict of interest, procurement policy, dan persetujuan management.');
   return lines.join('\n')
 }
