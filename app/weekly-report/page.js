@@ -147,7 +147,8 @@ export default function WeeklyReport() {
     setSyncing(true); setError(''); setSyncMessage('');
     try {
       const periodStart = addDays(reportDate, -6);
-      const futureAuditEnd = addDays(reportDate, 90);
+      const recentStart = addDays(reportDate, -13);
+      const futureAuditEnd = addDays(reportDate, 120);
       const futurePlanEnd = addDays(reportDate, 370);
 
       const [companiesRes, sitesRes, certRes, auditRes, grievanceRes] = await Promise.all([
@@ -173,7 +174,7 @@ export default function WeeklyReport() {
       const reportAudits = audits.filter(a => {
         if (a.status === 'Cancelled' || !a.start_date) return false;
         const end = a.end_date || a.start_date;
-        return end >= periodStart && a.start_date <= futureAuditEnd;
+        return end >= recentStart && a.start_date <= futureAuditEnd;
       });
 
       const auditGroups = new Map();
@@ -213,7 +214,7 @@ export default function WeeklyReport() {
       const recentCerts = certifications.filter(c => {
         const basis = c.issue_date || c.valid_from;
         const section = normalizeStandard(c.standard);
-        return PROGRESS_SECTIONS.includes(section) && c.status === 'Certified' && basis && basis >= periodStart && basis <= reportDate;
+        return PROGRESS_SECTIONS.includes(section) && c.status === 'Certified' && basis && basis >= recentStart && basis <= reportDate;
       });
       const certGroups = new Map();
       for (const cert of recentCerts) {
@@ -246,7 +247,10 @@ export default function WeeklyReport() {
         });
       }
 
-      const newGrievances = grievances.filter(g => g.opened_date && g.opened_date >= periodStart && g.opened_date <= reportDate);
+      const newGrievances = grievances.filter(g => {
+        const basis = g.source_submitted_date || g.source_received_date || g.opened_date;
+        return basis && basis >= periodStart && basis <= reportDate;
+      });
       for (const g of newGrievances) {
         const company = companyMap[g.company_id]?.company_code || g.company || '-';
         generated.push({
@@ -254,8 +258,8 @@ export default function WeeklyReport() {
           section: 'Grievance',
           unit: null,
           stage: null,
-          progress_id: `Grievance baru ${g.case_id || ''} terkait ${g.issue_title || g.category || 'isu stakeholder'} di ${company}. Status saat ini ${g.status || 'Open'} dengan progres ${Number(g.progress || 0)}%.`,
-          progress_en: `A new grievance ${g.case_id || ''} regarding ${g.issue_title || g.category || 'a stakeholder issue'} at ${company} was registered. Current status is ${g.status || 'Open'} with ${Number(g.progress || 0)}% progress.`,
+          progress_id: `Grievance baru ${g.case_id || ''} terkait ${g.issue_title || g.category || 'isu stakeholder'} di ${company}. Dilaporkan oleh ${g.complaint_source || 'stakeholder'}. Status saat ini ${g.status || 'Open'} dengan progres ${Number(g.progress || 0)}%.`,
+          progress_en: `A new grievance ${g.case_id || ''} regarding ${g.issue_title || g.category || 'a stakeholder issue'} at ${company} was registered by ${g.complaint_source || 'a stakeholder'}. Current status is ${g.status || 'Open'} with ${Number(g.progress || 0)}% progress.`,
           sort_order: sectionCounter.Grievance++,
           source_module: 'grievances',
           source_reference: g.id,
@@ -303,7 +307,8 @@ export default function WeeklyReport() {
       }
 
       await loadReport();
-      setSyncMessage(`Monitoring data synchronized: ${generated.length} progress row(s) and ${autoPlans.length} ISPO plan row(s). Manual rows are preserved.`);
+      const sourceCounts = generated.reduce((m,r)=>{m[r.source_module]=(m[r.source_module]||0)+1;return m;},{});
+      setSyncMessage(`Live data synchronized: ${sourceCounts.audit_events||0} audit row(s), ${sourceCounts.certifications||0} certification row(s), ${sourceCounts.grievances||0} grievance row(s), and ${autoPlans.length} ISPO plan row(s). Manual rows are preserved.`);
     } catch (err) {
       setError(err?.message || String(err));
     } finally {
@@ -367,8 +372,8 @@ export default function WeeklyReport() {
 
   return <div className="page-wrap">
     <div className="page-heading weekly-heading">
-      <div><h1>Weekly Progress Report</h1><p>Dedicated report module following the bilingual System & Monitoring weekly report format.</p></div>
-      <div className="detail-actions"><button className="secondary-btn" onClick={syncMonitoringData} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync Monitoring Data'}</button><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
+      <div><h1>Weekly Progress Report</h1><p>Build the bilingual report from real Certification, Audit and Grievance data already stored in Supabase.</p></div>
+      <div className="detail-actions"><button className="secondary-btn" onClick={syncMonitoringData} disabled={syncing}>{syncing ? 'Building Draft…' : 'Build Draft from Live Data'}</button><button className="secondary-btn" onClick={copyPreviousReport}>Copy Previous Week</button><button className="primary-btn" onClick={generateWord}>Generate Word Report</button></div>
     </div>
 
     {error ? <div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div> : <div className="sync-success">● Weekly Report is separate from NDPE Implementation</div>}
@@ -380,10 +385,10 @@ export default function WeeklyReport() {
 
     <section className="panel weekly-auto-panel">
       <div>
-        <strong>Automatic Monitoring Source</strong>
-        <span>Sync pulls ISPO / ISCC / INS progress from Audit & Certification Monitoring, new grievances from the reporting week, and keeps Lain-lain/manual rows editable.</span>
+        <strong>Live Monitoring Source</strong>
+        <span>Build Draft reads the real Audit & Certification registers, plus grievances received/submitted during the reporting week. Manual wording and Lain-lain remain editable.</span>
       </div>
-      <div className="weekly-auto-chips"><span>Audit Monitoring</span><span>Certification Monitoring</span><span>Grievance</span></div>
+      <div className="weekly-auto-chips"><span>REAL · Audit</span><span>REAL · Certification</span><span>REAL · Grievance</span></div>
     </section>
     {syncMessage ? <div className="sync-success">● {syncMessage}</div> : null}
 
