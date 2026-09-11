@@ -1,13 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { supabase, getSupabaseConfigError } from '../../lib/supabaseClient';
 import { SYSTEM_USERS } from '../../lib/systemUsers';
 import styles from './page.module.css';
 
 export default function LoginPage() {
-  const searchParams = useSearchParams();
   const [selectedUsername, setSelectedUsername] = useState(SYSTEM_USERS[0].username);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -15,15 +13,18 @@ export default function LoginPage() {
   const [error, setError] = useState('');
 
   const selectedUser = useMemo(
-    () => SYSTEM_USERS.find(user => user.username === selectedUsername) || SYSTEM_USERS[0],
+    () => SYSTEM_USERS.find((user) => user.username === selectedUsername) || SYSTEM_USERS[0],
     [selectedUsername]
   );
 
   useEffect(() => {
-    if (searchParams.get('unauthorized') === '1') {
+    // Read query string only in the browser. This avoids Next.js production
+    // prerender errors caused by useSearchParams without a Suspense boundary.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('unauthorized') === '1') {
       setError('Akun tersebut tidak terdaftar sebagai pengguna System Monitoring.');
     }
-  }, [searchParams]);
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -62,7 +63,7 @@ export default function LoginPage() {
         </div>
 
         <div className={styles.heroCopy}>
-          <span>SUSTAINABILITY & COMPLIANCE</span>
+          <span>SUSTAINABILITY &amp; COMPLIANCE</span>
           <h1>Monitoring workspace untuk Sustainability.</h1>
           <p>Grievance, audit, certification, NDPE, quotation dan weekly report dalam satu sistem.</p>
         </div>
@@ -80,9 +81,11 @@ export default function LoginPage() {
 
           <label className={styles.field}>
             <span>User</span>
-            <select value={selectedUsername} onChange={e => setSelectedUsername(e.target.value)}>
-              {SYSTEM_USERS.map(user => (
-                <option key={user.username} value={user.username}>{user.name}</option>
+            <select value={selectedUsername} onChange={(e) => setSelectedUsername(e.target.value)}>
+              {SYSTEM_USERS.map((user) => (
+                <option key={user.username} value={user.username}>
+                  {user.name}
+                </option>
               ))}
             </select>
           </label>
@@ -95,10 +98,10 @@ export default function LoginPage() {
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="Masukkan password"
               />
-              <button type="button" onClick={() => setShowPassword(v => !v)}>
+              <button type="button" onClick={() => setShowPassword((value) => !value)}>
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
