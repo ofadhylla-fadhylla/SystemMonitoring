@@ -1,0 +1,2 @@
+supplier_name,supplier_code,latitude,longitude,land_status,land_document_no,document_status,land_document_expiry,area_ha,village,district,regency,province,notes
+Supplier A,SUP-001,-1.2345,110.1234,HGU,HGU-001,Verified,2030-12-31,120.5,Desa A,Kecamatan B,Kabupaten C,Kalimantan Barat,Contoh data
