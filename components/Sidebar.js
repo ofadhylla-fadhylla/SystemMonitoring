@@ -8,6 +8,7 @@ const menu = [
   ['/certificates', 'Certification Monitoring', '◈'],
   ['/master-data', 'Master Company & Site', '▦'],
   ['/documents', 'NDPE Implementation', '▤'],
+  ['/non-spatial-monitoring', 'Monitoring Non Spasial', '◉'],
   ['/quotations', 'Penawaran Harga', '▱'],
   ['/weekly-report', 'Weekly Report', '▧'],
 ];
@@ -20,7 +21,7 @@ export default function Sidebar() {
         <div><div className="brand-title">SYSTEM</div><div className="brand-subtitle">MONITORING</div></div>
       </div>
       <nav>{menu.map(([href,label,icon])=><Link key={href} href={href} className="nav-item"><span className="nav-icon">{icon}</span><span>{label}</span></Link>)}</nav>
-      <div className="sidebar-note"><strong>Supabase Mode</strong><span>Grievance, certification, audit, NDPE, vendor selection & weekly reporting.</span></div>
+      <div className="sidebar-note"><strong>Supabase Mode</strong><span>Grievance, certification, audit, NDPE, media monitoring, vendor selection & weekly reporting.</span></div>
     </aside>
   );
 }
