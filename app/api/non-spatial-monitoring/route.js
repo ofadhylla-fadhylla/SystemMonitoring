@@ -35,17 +35,23 @@ function normalizeTitle(value='') {
   return String(value).toLowerCase().replace(/\s+-\s+[^-]+$/,'').replace(/[^a-z0-9à-ÿ]+/gi,' ').replace(/\s+/g,' ').trim();
 }
 function buildAliases(entity, code) {
-  const e = safeText(entity, 180);
-  const c = safeText(code, 30).toUpperCase();
-  const list = [];
-  const add = v => { const s = safeText(v, 180); if (s && !list.some(x => x.toLowerCase() === s.toLowerCase())) list.push(s); };
-  add(e);
-  if (e && !/^pt\.?\s/i.test(e) && !/kpn/i.test(e)) add(`PT ${e}`);
-  if (c && c !== 'GROUP' && c !== 'CUSTOM' && c !== 'KPN') add(`PT ${c}`);
-  if (/kpn/i.test(e) || c === 'KPN') { add('KPN Plantations'); add('KPN Plantation'); add('KPN Corp'); }
-  return list.slice(0, 6);
+  // V8.15.3: search only the legal company name selected from Master Company.
+  // No acronym/code alias and no extra "PT <code>" expansion to reduce false positives.
+  const legalName = safeText(entity, 180);
+  return legalName ? [legalName] : [];
 }
 function aliasExpression(aliases) { return `(${aliases.map(exactPhrase).join(' OR ')})`; }
+function parseAreaTerms(value='') {
+  return [...new Set(String(value || '').split('||').map(x=>safeText(x,120)).filter(Boolean))].slice(0,12);
+}
+function areaExpression(areas) { return areas?.length ? `(${areas.map(exactPhrase).join(' OR ')})` : ''; }
+function buildSearchQuery(aliases, areas, extra='') {
+  let query = aliasExpression(aliases);
+  const areaQuery = areaExpression(areas);
+  if (areaQuery) query += ` ${areaQuery}`;
+  if (extra) query += ` ${extra}`;
+  return query;
+}
 
 async function fetchText(url, timeoutMs = 18000) {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -79,9 +85,8 @@ function classifyTone(tone, text='') {
 function normalizeGdelt(article) {
   return { title:article?.title||'(tanpa judul)', url:article?.url||'', domain:article?.domain||'', seenDate:parseSeenDate(article?.seendate), language:article?.language||'', sourceCountry:article?.sourcecountry||'', socialImage:article?.socialimage||'', tone:article?.tone??null, sentiment:classifyTone(article?.tone, article?.title||''), sourceEngine:'GDELT' };
 }
-async function fetchGdelt({aliases, extra, start, end, language, maxRecords}) {
-  let query = aliasExpression(aliases);
-  if (extra) query += ` ${extra}`;
+async function fetchGdelt({aliases, areas, extra, start, end, language, maxRecords}) {
+  let query = buildSearchQuery(aliases, areas, extra);
   if (language === 'indonesian') query += ' sourcelang:indonesian';
   const params = new URLSearchParams({query, mode:'artlist', maxrecords:String(Math.min(250, Math.max(maxRecords*3,50))), format:'json', sort:'datedesc', startdatetime:ymdhms(start), enddatetime:ymdhms(end,true)});
   const text = await fetchText(`${GDELT_HTTPS}?${params.toString()}`, 20000);
@@ -98,13 +103,10 @@ function parseGoogleRss(xml,start,end){
   return items.map(item=>{const title=decodeXml(between(item,'<title>','</title>'));const link=decodeXml(between(item,'<link>','</link>'));const pubDate=decodeXml(between(item,'<pubDate>','</pubDate>'));const description=decodeXml(between(item,'<description>','</description>'));const source=parseSource(item);const seenDate=pubDate?new Date(pubDate).toISOString():null;return{title:title||'(tanpa judul)',url:link,domain:source.name||domainFromUrl(source.url||link),seenDate,language:'Indonesian',sourceCountry:'Indonesia',socialImage:'',tone:null,sentiment:classifyText(`${title} ${description}`,'needs_review'),sourceEngine:'Google News'};}).filter(x=>inRange(x.seenDate,start,end));
 }
 async function fetchGoogleFeed(query,language){const params=new URLSearchParams({q:query});if(language==='indonesian'){params.set('hl','id');params.set('gl','ID');params.set('ceid','ID:id')}else{params.set('hl','en');params.set('gl','US');params.set('ceid','US:en')}return await fetchText(`${GOOGLE_NEWS}?${params.toString()}`,18000)}
-async function fetchGoogle({aliases, extra, start, end, language}) {
+async function fetchGoogle({aliases, areas, extra, start, end, language}) {
   const dateQuery=`after:${start} before:${addDays(end,1)}`;
-  const aliasQuery=aliasExpression(aliases);
-  const extraQuery=extra?` ${extra}`:'';
-  const queries=[`${aliasQuery}${extraQuery} ${dateQuery}`];
-  // A second broad query helps articles whose headline uses only the legal name or acronym.
-  if (aliases.length>1) queries.push(`${aliases.map(a=>exactPhrase(a)).join(' OR ')}${extraQuery} ${dateQuery}`);
+  const searchQuery=buildSearchQuery(aliases, areas, extra);
+  const queries=[`${searchQuery} ${dateQuery}`];
   const xmls=await Promise.all(queries.map(q=>fetchGoogleFeed(q,language)));
   return xmls.flatMap(xml=>parseGoogleRss(xml,start,end));
 }
@@ -120,6 +122,9 @@ export async function GET(request) {
   try {
     const {searchParams}=new URL(request.url);
     const start=safeText(searchParams.get('start'),10), end=safeText(searchParams.get('end'),10), entity=safeText(searchParams.get('entity'),180), code=safeText(searchParams.get('code'),30), extra=safeText(searchParams.get('extra'),180), language=safeText(searchParams.get('language'),30);
+    const areas=parseAreaTerms(searchParams.get('areas'));
+    const areaExtra=safeText(searchParams.get('areaExtra'),180);
+    if(areaExtra){ for(const part of areaExtra.split(/[,;|]/).map(x=>x.trim()).filter(Boolean)){ if(!areas.includes(part)) areas.push(part); } }
     const maxRecords=Math.max(10,Math.min(100,Number(searchParams.get('max')||50)));
     if(!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end))return NextResponse.json({error:'Tanggal mulai dan akhir wajib diisi.'},{status:400});
     if(!entity)return NextResponse.json({error:'Entity / keyword wajib diisi.'},{status:400});
@@ -131,8 +136,8 @@ export async function GET(request) {
     const failures=[];
     const resultRows=[];
     const [gdeltSettled,googleSettled]=await Promise.allSettled([
-      fetchGdelt({aliases,extra,start,end,language,maxRecords}),
-      fetchGoogle({aliases,extra,start,end,language})
+      fetchGdelt({aliases,areas,extra,start,end,language,maxRecords}),
+      fetchGoogle({aliases,areas,extra,start,end,language})
     ]);
     if(gdeltSettled.status==='fulfilled') resultRows.push(...gdeltSettled.value); else failures.push(`GDELT: ${gdeltSettled.reason?.message||'failed'}`);
     if(googleSettled.status==='fulfilled') resultRows.push(...googleSettled.value); else failures.push(`Google News: ${googleSettled.reason?.message||'failed'}`);
@@ -143,7 +148,7 @@ export async function GET(request) {
     const negative=clean.filter(x=>x.sentiment==='negative').slice(0,maxRecords);
     const needsReview=clean.filter(x=>x.sentiment==='needs_review').slice(0,maxRecords);
     return NextResponse.json({
-      meta:{source:gdeltSettled.status==='fulfilled'&&googleSettled.status==='fulfilled'?'GDELT + Google News':gdeltSettled.status==='fulfilled'?'GDELT DOC 2.0':'Google News RSS',entity,code,aliases,extra,language:language||'all',start,end,generatedAt:new Date().toISOString(),sentimentMethod:'GDELT tone + expanded Indonesian/English keyword classification',failures},
+      meta:{source:gdeltSettled.status==='fulfilled'&&googleSettled.status==='fulfilled'?'GDELT + Google News':gdeltSettled.status==='fulfilled'?'GDELT DOC 2.0':'Google News RSS',entity,code,aliases,areas,areaFilterActive:areas.length>0,matchMode:areas.length>0?'Legal company name + area':'Legal company name only',extra,language:language||'all',start,end,generatedAt:new Date().toISOString(),sentimentMethod:'GDELT tone + expanded Indonesian/English keyword classification',failures},
       positive,negative,needsReview,
       totals:{positive:positive.length,negative:negative.length,needsReview:needsReview.length,total:positive.length+negative.length+needsReview.length,raw:clean.length}
     });
