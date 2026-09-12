@@ -1,0 +1,40 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { supabase, getSupabaseConfigError } from '../../../lib/supabaseClient';
+import SimsContextBar from '../../../components/SimsContextBar';
+import styles from '../sims.module.css';
+
+export default function SustainabilityCompliance(){
+  const [companies,setCompanies]=useState([]),[standards,setStandards]=useState([]),[companyId,setCompanyId]=useState(''),[standardId,setStandardId]=useState(''),[year,setYear]=useState(new Date().getFullYear());
+  const [assessment,setAssessment]=useState(null),[principles,setPrinciples]=useState([]),[criteria,setCriteria]=useState([]),[indicators,setIndicators]=useState([]),[items,setItems]=useState([]),[ranking,setRanking]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  useEffect(()=>{(async()=>{const ce=getSupabaseConfigError();if(ce||!supabase){setError(ce||'Supabase not configured.');return;}const[c,s]=await Promise.all([supabase.from('companies').select('id,company_code,company_name,status').eq('status','Active').order('company_code'),supabase.from('sims_standards').select('*').eq('status','Active').order('name')]);if(c.error||s.error)setError((c.error||s.error).message);setCompanies(c.data||[]);setStandards(s.data||[]);if(s.data?.[0])setStandardId(s.data[0].id)})()},[]);
+  const company=companies.find(x=>x.id===companyId),standard=standards.find(x=>x.id===standardId);
+
+  async function openCompliance(){setLoading(true);setError('');setNotice('');try{
+    const p=await supabase.from('sims_principles').select('*').eq('standard_id',standardId).order('sort_order');if(p.error)throw p.error;const pids=(p.data||[]).map(x=>x.id);const c=pids.length?await supabase.from('sims_criteria').select('*').in('principle_id',pids).order('sort_order'):{data:[]};if(c.error)throw c.error;const cids=(c.data||[]).map(x=>x.id);const i=cids.length?await supabase.from('sims_indicators').select('*').in('criterion_id',cids).eq('active',true).order('sort_order'):{data:[]};if(i.error)throw i.error;setPrinciples(p.data||[]);setCriteria(c.data||[]);setIndicators(i.data||[]);
+    const a=await supabase.from('sims_assessments').select('*').eq('company_id',companyId).eq('standard_id',standardId).eq('assessment_year',year).maybeSingle();if(a.error)throw a.error;setAssessment(a.data||null);
+    if(a.data){const it=await supabase.from('sims_assessment_items').select('*').eq('assessment_id',a.data.id);if(it.error)throw it.error;setItems(it.data||[]);}else{setItems([]);setNotice('Belum ada assessment untuk PT ini. Compliance tetap dapat dibandingkan dengan PT lain yang sudah memiliki assessment.');}
+    await loadRanking(i.data||[]);
+  }catch(e){setError(e.message||String(e))}finally{setLoading(false)}}
+
+  async function loadRanking(masterIndicators){
+    const ass=await supabase.from('sims_assessments').select('id,company_id,assessment_year').eq('standard_id',standardId).eq('assessment_year',year);if(ass.error)throw ass.error;const aids=(ass.data||[]).map(x=>x.id);if(!aids.length){setRanking([]);return;}const its=await supabase.from('sims_assessment_items').select('assessment_id,self_status,verifier_status').in('assessment_id',aids);if(its.error)throw its.error;const by={};(its.data||[]).forEach(x=>(by[x.assessment_id]??=[]).push(x));const total=masterIndicators.length||1;const rows=(ass.data||[]).map(a=>{const arr=by[a.id]||[];const verified=arr.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length;const comp=companies.find(c=>c.id===a.company_id);return{company_id:a.company_id,code:comp?.company_code||'-',name:comp?.company_name||'Unknown',verified,total,percent:Math.round(verified/total*100)}}).sort((a,b)=>b.percent-a.percent||a.code.localeCompare(b.code));setRanking(rows);
+  }
+
+  const itemByInd=useMemo(()=>Object.fromEntries(items.map(x=>[x.indicator_id,x])),[items]);
+  const total=indicators.length;const verified=indicators.filter(ind=>{const it=itemByInd[ind.id];return it?.self_status==='Fulfilled'&&it?.verifier_status==='Verified'}).length;const overall=total?Math.round(verified/total*100):0;
+  const principleRows=useMemo(()=>principles.map(p=>{const critIds=criteria.filter(c=>c.principle_id===p.id).map(c=>c.id);const inds=indicators.filter(i=>critIds.includes(i.criterion_id));const v=inds.filter(ind=>{const it=itemByInd[ind.id];return it?.self_status==='Fulfilled'&&it?.verifier_status==='Verified'}).length;return{...p,total:inds.length,verified:v,percent:inds.length?Math.round(v/inds.length*100):0}}),[principles,criteria,indicators,itemByInd]);
+  const criterionRows=useMemo(()=>criteria.map(c=>{const inds=indicators.filter(i=>i.criterion_id===c.id);const v=inds.filter(ind=>{const it=itemByInd[ind.id];return it?.self_status==='Fulfilled'&&it?.verifier_status==='Verified'}).length;const p=principles.find(x=>x.id===c.principle_id);return{...c,principle:p,total:inds.length,verified:v,percent:inds.length?Math.round(v/inds.length*100):0}}),[criteria,indicators,itemByInd,principles]);
+
+  return <div className="page-wrap">
+    <div className="page-heading"><div><div className={styles.eyebrow}>SIMS · COMPLIANCE ANALYTICS</div><h1>Sustainability Compliance Level</h1><p>Compliance is calculated only from indicators that are both self-assessed as Fulfilled and verified by a verifier.</p></div></div>
+    <SimsContextBar {...{companies,standards,companyId,setCompanyId,standardId,setStandardId,year,setYear,onOpen:openCompliance,loading}} />
+    {error?<div className="sync-error"><strong>SIMS error</strong><span>{error}</span></div>:null}{notice?<div className={styles.notice}>{notice}</div>:null}
+    {(assessment||ranking.length)?<>
+      <section className={styles.contextSummary}><div><span>Company</span><strong>{company?.company_code} — {company?.company_name}</strong></div><div><span>Standard</span><strong>{standard?.name}</strong></div><div><span>Assessment</span><strong>{year}</strong></div></section>
+      <section className={styles.rankGrid}><div><div className={styles.complianceHero}><span>Overall Compliance</span><strong>{overall}%</strong><p>{verified} Verified Fulfilled of {total} applicable master indicators.</p></div><div className={styles.principleBars} style={{marginTop:16}}><h2 style={{fontSize:16,margin:'0 0 16px'}}>Compliance by Principle</h2>{principleRows.map(r=><div className={styles.barRow} key={r.id}><div className={styles.barLabel}><strong>{r.code} · {r.title}</strong><span>{r.verified}/{r.total} · {r.percent}%</span></div><div className={styles.barTrack}><i style={{width:`${r.percent}%`}}/></div></div>)}</div></div><div className={styles.ranking}><div className="panel-head"><div><h2>Company Compliance Ranking</h2><p>Same standard and assessment year.</p></div></div>{ranking.length?ranking.map((r,idx)=><div className={styles.rankRow} key={r.company_id}><span className={styles.rankNo}>{idx+1}</span><div className={styles.rankName}><strong>{r.code} — {r.name}</strong><span>{r.verified}/{r.total} verified indicators</span></div><span className={styles.rankPct}>{r.percent}%</span></div>):<div className={styles.empty}><span>No comparable assessment yet.</span></div>}</div></section>
+      <section className={styles.matrix}><table><thead><tr><th>Principle</th><th>Criterion</th><th>Indicators</th><th>Verified</th><th>Gap</th><th>Compliance</th></tr></thead><tbody>{criterionRows.map(r=>{const inds=indicators.filter(i=>i.criterion_id===r.id);const gaps=inds.filter(ind=>itemByInd[ind.id]?.self_status==='Not Fulfilled').length;return <tr key={r.id}><td><strong>{r.principle?.code}</strong> {r.principle?.title}</td><td><strong>{r.code}</strong> {r.title}</td><td>{r.total}</td><td>{r.verified}</td><td className={gaps?styles.danger:''}>{gaps}</td><td><strong>{r.percent}%</strong></td></tr>})}</tbody></table></section>
+    </>:<section className={styles.empty}><strong>Select PT, standard and year.</strong><span>Open the compliance view to calculate verified fulfillment and compare companies.</span></section>}
+  </div>
+}
