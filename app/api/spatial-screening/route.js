@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
+import forestMaster from './kawasan-hutan-master.json';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Official/public services used for screening.
-const FOREST_PRIMARY_LAYER = 'https://geoportal.menlhk.go.id/server/rest/services/jsdgejawfvrdtasdt/KWS_HUTAN/MapServer/0';
-const FOREST_PRIMARY_MAP = 'https://geoportal.menlhk.go.id/server/rest/services/jsdgejawfvrdtasdt/KWS_HUTAN/MapServer';
-const FOREST_FALLBACK_MAP = 'https://geoportal.menlhk.go.id/server/rest/services/SIGAP_Interaktif/Kawasan_Hutan/MapServer';
-
+// Public services used for screening. Kawasan Hutan uses the uploaded local SHP master.
 const BIG_NATURAL_RESOURCES = 'https://kspservices.big.go.id/satupeta/rest/services/PUBLIK/SUMBER_DAYA_ALAM_DAN_LINGKUNGAN/MapServer';
 const PEAT_LAYER = `${BIG_NATURAL_RESOURCES}/6`;
 const PEAT_FUNCTION_LAYER = `${BIG_NATURAL_RESOURCES}/48`;
@@ -188,33 +185,74 @@ async function queryArcGisLayerRobust(layerUrl, mapServerUrl, layerId, lat, lon,
   };
 }
 
-async function queryForest(lat, lon) {
-  const primary = await queryArcGisLayerRobust(
-    FOREST_PRIMARY_LAYER, FOREST_PRIMARY_MAP, 0, lat, lon,
-    'Kementerian Kehutanan — KWSHUTAN_AR_250K_122025'
-  );
-  if (primary.status === 'OK') return primary;
+function bboxOfGeoJson(fc) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  function walk(coords) {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+      minX = Math.min(minX, coords[0]); minY = Math.min(minY, coords[1]);
+      maxX = Math.max(maxX, coords[0]); maxY = Math.max(maxY, coords[1]);
+      return;
+    }
+    for (const x of coords) walk(x);
+  }
+  for (const f of fc?.features || []) walk(f?.geometry?.coordinates);
+  return [minX, minY, maxX, maxY];
+}
 
-  // Retry once because the geoportal can intermittently return gateway errors.
-  await sleep(700);
-  const retry = await queryArcGisLayerRobust(
-    FOREST_PRIMARY_LAYER, FOREST_PRIMARY_MAP, 0, lat, lon,
-    'Kementerian Kehutanan — KWSHUTAN_AR_250K_122025 (retry)'
-  );
-  if (retry.status === 'OK') return retry;
+function pointInRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = Number(ring[i]?.[0]), yi = Number(ring[i]?.[1]);
+    const xj = Number(ring[j]?.[0]), yj = Number(ring[j]?.[1]);
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lon < (xj - xi) * (lat - yi) / ((yj - yi) || Number.EPSILON) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
 
-  // Fallback to the public SIGAP interactive forest MapServer using Identify.
-  const fallback = await queryArcGisLayerRobust(
-    `${FOREST_FALLBACK_MAP}/0`, FOREST_FALLBACK_MAP, null, lat, lon,
-    'Kementerian Kehutanan — SIGAP Kawasan Hutan fallback'
-  );
-  if (fallback.status === 'OK') return fallback;
+function pointInPolygonCoords(lon, lat, rings) {
+  if (!Array.isArray(rings) || !rings.length) return false;
+  if (!pointInRing(lon, lat, rings[0])) return false;
+  for (let i = 1; i < rings.length; i += 1) {
+    if (pointInRing(lon, lat, rings[i])) return false;
+  }
+  return true;
+}
 
+function pointInGeometry(lon, lat, geometry) {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon') return pointInPolygonCoords(lon, lat, geometry.coordinates);
+  if (geometry.type === 'MultiPolygon') return (geometry.coordinates || []).some((poly) => pointInPolygonCoords(lon, lat, poly));
+  return false;
+}
+
+function queryForestLocal(lat, lon) {
+  const source = 'Master SHP Kawasan Hutan — user uploaded';
+  const bbox = bboxOfGeoJson(forestMaster);
+  const [minLon, minLat, maxLon, maxLat] = bbox;
+  const inBbox = lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat;
+
+  if (!inBbox) {
+    return {
+      status: 'NOT_COVERED', source, method: 'local-shp-point-in-polygon', matched: null,
+      count: 0, features: [], coverage: false, coverage_bbox: bbox,
+      note: 'Koordinat berada di luar extent master SHP Kawasan Hutan yang diunggah. Sistem tidak menyimpulkan area bebas kawasan hutan.',
+      error: null,
+    };
+  }
+
+  const hits = (forestMaster?.features || []).filter((f) => pointInGeometry(lon, lat, f?.geometry));
   return {
-    ...primary,
-    source: 'Kementerian Kehutanan — Kawasan Hutan',
-    diagnostics: [...(primary.diagnostics || []), ...(retry.diagnostics || []), ...(fallback.diagnostics || [])],
-    error: [primary.error, retry.error, fallback.error].filter(Boolean).join(' || '),
+    status: 'OK', source, method: 'local-shp-point-in-polygon', matched: hits.length > 0,
+    count: hits.length, coverage: true, coverage_bbox: bbox,
+    features: hits.slice(0, 8).map((f) => ({ ...(f?.properties || {}) })),
+    note: hits.length
+      ? 'Koordinat beririsan dengan polygon pada master SHP Kawasan Hutan yang diunggah.'
+      : 'Tidak ada overlap dengan polygon pada master SHP Kawasan Hutan yang diunggah. Hasil ini hanya berlaku terhadap cakupan dataset master tersebut.',
+    error: null,
   };
 }
 
@@ -333,10 +371,11 @@ function findValue(features, keys) {
 }
 
 function classifyForest(result) {
+  if (result.status === 'NOT_COVERED') return { class: 'NOT_COVERED', label: 'Di luar cakupan master SHP Kawasan Hutan', score: 0, value: null };
   if (result.status !== 'OK') return { class: 'UNKNOWN', label: 'Kawasan hutan belum berhasil diperiksa', score: 0, value: null };
-  if (!result.matched) return { class: 'NO_MATCH', label: 'Tidak ada polygon kawasan hutan pada titik', score: 0, value: 'No overlap detected' };
+  if (!result.matched) return { class: 'NO_MATCH', label: 'Tidak overlap dengan polygon Kawasan Hutan pada master SHP', score: 0, value: 'No overlap in uploaded master' };
   const text = firstText(result).toUpperCase();
-  const explicit = findValue(result.features, ['fungsi', 'kws', 'kawasan', 'status', 'kelas', 'nama']);
+  const explicit = findValue(result.features, ['hutan', 'fungsi', 'kws', 'kawasan', 'status', 'kelas', 'nama']);
   if (/APL|AREA PENGGUNAAN LAIN/.test(text)) return { class: 'APL', label: 'Area Penggunaan Lain (APL)', score: 0, value: explicit || 'APL' };
   if (/HUTAN LINDUNG|(^|\W)HL(\W|$)|KONSERVASI|KSA|KPA|TAMAN NASIONAL|CAGAR ALAM/.test(text)) return { class: 'PROTECTED_FOREST', label: 'Kawasan lindung / konservasi', score: 35, value: explicit || 'Protected / conservation forest' };
   if (/HPK|HUTAN PRODUKSI.*KONVERSI/.test(text)) return { class: 'HPK', label: 'Hutan Produksi yang dapat Dikonversi (HPK)', score: 25, value: explicit || 'HPK' };
@@ -391,10 +430,12 @@ function buildNarrative({ supplierName, lat, lon, hguRisk, peatRisk, forestRisk,
   const sentences = [];
   sentences.push(`Hasil screening otomatis untuk ${supplier} pada koordinat ${lat.toFixed(6)}, ${lon.toFixed(6)}:`);
 
-  if (forest.status !== 'OK') {
-    sentences.push('Status kawasan hutan belum dapat dipastikan karena layanan sumber kawasan hutan belum berhasil diakses pada saat pemeriksaan.');
+  if (forest.status === 'NOT_COVERED') {
+    sentences.push('Koordinat berada di luar cakupan master SHP Kawasan Hutan yang diunggah, sehingga status kawasan hutan belum dapat disimpulkan dari dataset ini.');
+  } else if (forest.status !== 'OK') {
+    sentences.push('Status kawasan hutan belum dapat dipastikan karena master Kawasan Hutan belum berhasil diperiksa pada saat screening.');
   } else if (forestRisk.class === 'NO_MATCH') {
-    sentences.push('Pada layer kawasan hutan yang berhasil diperiksa, titik tidak menunjukkan overlap dengan polygon kawasan hutan.');
+    sentences.push('Koordinat tidak beririsan dengan polygon Kawasan Hutan pada master SHP yang diunggah; kesimpulan ini hanya berlaku terhadap cakupan dataset tersebut.');
   } else if (forestRisk.class === 'APL') {
     sentences.push(`Titik teridentifikasi sebagai ${forestRisk.label}; pada screening ini tidak ditambahkan skor risiko kawasan hutan.`);
   } else {
@@ -508,7 +549,7 @@ export async function POST(request) {
       queryArcGisLayerRobust(PEAT_LAYER, BIG_NATURAL_RESOURCES, 6, lat, lon, 'BIG Satu Peta — Peta Lahan Gambut'),
       queryArcGisLayerRobust(PEAT_FUNCTION_LAYER, BIG_NATURAL_RESOURCES, 48, lat, lon, 'BIG Satu Peta — Fungsi Ekosistem Gambut'),
       queryArcGisLayerRobust(KHG_LAYER, BIG_NATURAL_RESOURCES, 37, lat, lon, 'BIG Satu Peta — Kesatuan Hidrologis Gambut'),
-      queryForest(lat, lon),
+      Promise.resolve(queryForestLocal(lat, lon)),
     ]);
 
     const risk = buildRisk({
@@ -532,10 +573,10 @@ export async function POST(request) {
       source_links: {
         bhumi: 'https://bhumi.atrbpn.go.id/peta',
         atlas: 'https://atlas.atrbpn.go.id/',
-        forest: 'https://geoportal.menlhk.go.id/',
+        forest: null,
         big_one_map: 'https://tanahair.indonesia.go.id/portal-web',
       },
-      disclaimer: 'Hasil ini adalah screening spasial dan penjelasan otomatis berbasis data sumber yang berhasil dibaca. Bukan penetapan legal. Status HGU/SHM final harus dikonfirmasi melalui dokumen dan layanan resmi ATR/BPN; status kawasan hutan/gambut harus dikonfirmasi terhadap dataset resmi yang berlaku.',
+      disclaimer: 'Hasil ini adalah screening spasial dan penjelasan otomatis berbasis data sumber yang berhasil dibaca. Bukan penetapan legal. Status HGU/SHM final harus dikonfirmasi melalui dokumen dan layanan resmi ATR/BPN; status kawasan hutan pada screening ini mengikuti master SHP yang diunggah dan hanya berlaku pada cakupan dataset tersebut; status gambut harus dikonfirmasi terhadap dataset resmi yang berlaku.',
     });
   } catch (error) {
     return NextResponse.json({ error: error?.message || 'Gagal menjalankan spatial screening.' }, { status: 500 });
