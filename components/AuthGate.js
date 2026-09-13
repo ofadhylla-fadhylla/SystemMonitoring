@@ -15,6 +15,8 @@ export default function AuthGate({ children }) {
 
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
+  const [dbProfile, setDbProfile] = useState(null);
+  const [roleSource, setRoleSource] = useState('fallback');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -30,21 +32,48 @@ export default function AuthGate({ children }) {
     async function hydrate(currentSession) {
       if (!active) return;
       setSession(currentSession || null);
-      setLoading(false);
 
       if (!currentSession?.user) {
+        setDbProfile(null);
+        setRoleSource('fallback');
+        setLoading(false);
         if (!isLogin) router.replace('/login');
         return;
       }
 
-      const allowed = getSystemUserByEmail(currentSession.user.email);
-      if (!allowed) {
+      const fallback = getSystemUserByEmail(currentSession.user.email);
+      if (!fallback) {
         await supabase.auth.signOut();
         setSession(null);
+        setLoading(false);
         if (!isLogin) router.replace('/login?unauthorized=1');
         return;
       }
 
+      // V8.23: prefer database-backed role when the production-hardening table exists.
+      // Before SUPABASE-PRODUCTION-HARDENING-V8-23.sql is run, the app safely falls back
+      // to the existing static role registry so deployment cannot lock current users out.
+      const email=String(currentSession.user.email||'').toLowerCase();
+      const roleResult=await supabase.from('app_user_roles').select('display_name,role,active').eq('email',email).maybeSingle();
+      if (!active) return;
+
+      if (!roleResult.error) {
+        if (!roleResult.data?.active) {
+          await supabase.auth.signOut();
+          setSession(null);
+          setDbProfile(null);
+          setLoading(false);
+          if (!isLogin) router.replace('/login?unauthorized=1');
+          return;
+        }
+        setDbProfile(roleResult.data);
+        setRoleSource('database');
+      } else {
+        setDbProfile(null);
+        setRoleSource('fallback');
+      }
+
+      setLoading(false);
       if (isLogin) router.replace('/');
     }
 
@@ -61,10 +90,12 @@ export default function AuthGate({ children }) {
     };
   }, [isLogin, router]);
 
-  const currentUser = useMemo(
-    () => getSystemUserByEmail(session?.user?.email),
-    [session]
-  );
+  const currentUser = useMemo(() => {
+    const fallback=getSystemUserByEmail(session?.user?.email);
+    if(!fallback)return null;
+    if(roleSource!=='database'||!dbProfile)return fallback;
+    return {...fallback,name:dbProfile.display_name||fallback.name,role:dbProfile.role||fallback.role};
+  }, [session,dbProfile,roleSource]);
 
   async function signOut() {
     if (!supabase) return;
