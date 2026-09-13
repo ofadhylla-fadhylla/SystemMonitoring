@@ -12,6 +12,7 @@
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "docx": "latest"
+    "docx": "latest",
+    "jspdf": "latest"
   }
 }
