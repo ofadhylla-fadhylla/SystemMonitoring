@@ -98,6 +98,8 @@ export default function Sidebar() {
         .sidebar-subitem.active:before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:99px;background:#d7f36a}
         .nav-item.active{background:#1b3728;color:#fff;font-weight:700}
         .sidebar-section-separator{height:1px;background:#213b2d;margin:7px 8px}
+        .dash-hero .eyebrow,.dash-hero p{display:none!important}
+        .dash-hero h1{margin-bottom:0!important}
         @media(max-width:1000px){
           .sidebar-group-label,.sidebar-chevron,.sidebar-submenu{display:none}
           .sidebar-group-button{justify-content:center;padding:12px 13px}

@@ -31,16 +31,16 @@ export default function SimsContextBar({
       .sims-context-grid{display:grid;grid-template-columns:minmax(260px,1.7fr) minmax(220px,1.1fr) 170px auto;gap:12px;align-items:end}
       .sims-context-grid-auto{grid-template-columns:minmax(280px,1.8fr) minmax(230px,1.1fr) 180px}
       .sims-open-wrap{display:flex;align-items:end}.sims-open-wrap button{height:42px;white-space:nowrap}
-      .sims-auto-note{margin-top:12px;padding-top:12px;border-top:1px solid #edf2ef;color:#789087;font-size:11px}
+      .page-wrap:has(.sims-context-auto)>.page-heading p{display:none!important}
       @media(max-width:1000px){.sims-context-grid,.sims-context-grid-auto{grid-template-columns:1fr 1fr}.sims-company-field{grid-column:1/-1}}
       @media(max-width:650px){.sims-context-title{flex-direction:column}.sims-context-grid,.sims-context-grid-auto{grid-template-columns:1fr}.sims-company-field{grid-column:auto}}
     `}</style>
-    <section className="panel sims-context-panel">
+    <section className={`panel sims-context-panel ${hideOpenButton?'sims-context-auto':''}`}>
       <div className="sims-context-title">
         <div>
           <span className="sims-step-label">ASSESSMENT CONTEXT</span>
           <h2>Pilih perusahaan yang akan dinilai</h2>
-          <p>{helperText}</p>
+          {!hideOpenButton&&helperText?<p>{helperText}</p>:null}
         </div>
         {companyId?<span className="sims-ready-chip">Ready</span>:<span className="sims-wait-chip">Select PT</span>}
       </div>
@@ -67,7 +67,6 @@ export default function SimsContextBar({
         </label>
         {!hideOpenButton?<div className="sims-open-wrap"><button className="primary-btn" onClick={onOpen} disabled={!companyId||!standardId||loading}>{loading?'Loading…':'Open Assessment'}</button></div>:null}
       </div>
-      {hideOpenButton?<div className="sims-auto-note">Assessment akan dimuat otomatis setelah PT dipilih.</div>:null}
     </section>
   </>
 }
