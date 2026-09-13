@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
+import NotificationCenter from './NotificationCenter';
 import { supabase, getSupabaseConfigError } from '../lib/supabaseClient';
-import { getSystemUserByEmail } from '../lib/systemUsers';
+import { canAccessPath, getRoleLabel, getSystemUserByEmail } from '../lib/systemUsers';
 import styles from './AuthGate.module.css';
 
 export default function AuthGate({ children }) {
@@ -77,8 +78,8 @@ export default function AuthGate({ children }) {
     return (
       <div className={styles.centerScreen}>
         <div className={styles.loadingCard}>
-          <div className={styles.logo}>SM</div>
-          <strong>System Monitoring</strong>
+          <div className={styles.logo}>SMD</div>
+          <strong>System Monitoring Dashboard</strong>
           <span>Memeriksa sesi login…</span>
         </div>
       </div>
@@ -104,10 +105,12 @@ export default function AuthGate({ children }) {
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase())
     .join('');
+  const roleLabel = getRoleLabel(currentUser.role);
+  const allowedPath = canAccessPath(currentUser.role, pathname);
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar currentUser={currentUser} />
       <main className="main-content">
         <header className="topbar">
           <div>
@@ -115,9 +118,10 @@ export default function AuthGate({ children }) {
             <strong>System Monitoring</strong>
           </div>
           <div className={styles.accountArea}>
+            <NotificationCenter />
             <div className={styles.accountCopy}>
               <strong>{currentUser.name}</strong>
-              <span>System Monitoring User</span>
+              <span>{roleLabel}</span>
             </div>
             <div className={styles.userChip}>{initials || 'SM'}</div>
             <button type="button" className={styles.signOutButton} onClick={signOut}>
@@ -125,7 +129,16 @@ export default function AuthGate({ children }) {
             </button>
           </div>
         </header>
-        {children}
+        {allowedPath ? children : (
+          <div className="page-wrap">
+            <div className="panel" style={{maxWidth:720,margin:'40px auto',textAlign:'center',padding:32}}>
+              <div className="eyebrow">ACCESS CONTROL</div>
+              <h1 style={{margin:'8px 0'}}>Access restricted</h1>
+              <p style={{color:'#718179'}}>Role <strong>{roleLabel}</strong> does not have access to this module.</p>
+              <button className="primary-btn" onClick={()=>router.replace('/')}>Back to Dashboard</button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
