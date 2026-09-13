@@ -42,6 +42,10 @@ export default function SustainabilityAssessment(){
   const [openPrinciples,setOpenPrinciples]=useState({});
   const [openItems,setOpenItems]=useState({});
   const [savingId,setSavingId]=useState('');
+  const [dirtyItems,setDirtyItems]=useState({});
+  const [searchText,setSearchText]=useState('');
+  const [statusFilter,setStatusFilter]=useState('All');
+  const [verifyFilter,setVerifyFilter]=useState('All');
 
   useEffect(()=>{loadMasters()},[]);
 
@@ -83,7 +87,7 @@ export default function SustainabilityAssessment(){
 
   async function openAssessment(){
     if(!companyId||!standardId)return;
-    setLoading(true);setError('');setNotice('');setMasterMissing(false);
+    setLoading(true);setError('');setNotice('');setMasterMissing(false);setDirtyItems({});
     try{
       const hierarchy=await loadHierarchy(standardId);
       const inds=hierarchy.indicators;
@@ -125,7 +129,7 @@ export default function SustainabilityAssessment(){
   useEffect(()=>{
     if(companyId&&standardId)openAssessment();
     if(!companyId){
-      setAssessment(null);setItems([]);setEvidence([]);setPrinciples([]);setCriteria([]);setIndicators([]);setMasterMissing(false);
+      setAssessment(null);setItems([]);setEvidence([]);setPrinciples([]);setCriteria([]);setIndicators([]);setMasterMissing(false);setDirtyItems({});
     }
   },[companyId,standardId,year]);
 
@@ -135,15 +139,60 @@ export default function SustainabilityAssessment(){
   const evidenceByItem=useMemo(()=>{const m={};evidence.forEach(x=>(m[x.assessment_item_id]??=[]).push(x));return m},[evidence]);
   const company=companies.find(x=>x.id===companyId);
   const standard=standards.find(x=>x.id===standardId);
+
   const counts=useMemo(()=>{
     const total=items.length;
+    const assessed=items.filter(x=>x.self_status&&x.self_status!=='Not Started').length;
     const verified=items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length;
     const pending=items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status!=='Verified').length;
     const gaps=items.filter(x=>x.self_status==='Not Fulfilled').length;
-    return{total,verified,pending,gaps,compliance:total?Math.round(verified/total*100):0};
+    const na=items.filter(x=>x.self_status==='N/A').length;
+    return{
+      total,assessed,verified,pending,gaps,na,
+      assessmentProgress:total?Math.round(assessed/total*100):0,
+      compliance:total?Math.round(verified/total*100):0
+    };
   },[items]);
 
-  function patchItem(id,patch){setItems(v=>v.map(x=>x.id===id?{...x,...patch}:x))}
+  const criteriaMap=useMemo(()=>Object.fromEntries(criteria.map(x=>[x.id,x])),[criteria]);
+  const principleMap=useMemo(()=>Object.fromEntries(principles.map(x=>[x.id,x])),[principles]);
+
+  function indicatorMatches(ind){
+    const item=itemMap[ind.id];
+    if(!item)return false;
+    if(statusFilter!=='All'&&item.self_status!==statusFilter)return false;
+    if(verifyFilter!=='All'&&item.verifier_status!==verifyFilter)return false;
+    const term=searchText.trim().toLowerCase();
+    if(!term)return true;
+    const cr=criteriaMap[ind.criterion_id];
+    const pr=cr?principleMap[cr.principle_id]:null;
+    const text=[ind.code,ind.description,ind.object_evidence,cr?.code,cr?.title,pr?.code,pr?.title].filter(Boolean).join(' ').toLowerCase();
+    return text.includes(term);
+  }
+
+  const visibleIndicatorCount=useMemo(()=>indicators.filter(ind=>indicatorMatches(ind)).length,[indicators,itemMap,statusFilter,verifyFilter,searchText,criteriaMap,principleMap]);
+  const hasActiveFilter=!!searchText.trim()||statusFilter!=='All'||verifyFilter!=='All';
+
+  useEffect(()=>{
+    if(!assessment||!hasActiveFilter)return;
+    const next={};
+    principles.forEach(pr=>{
+      const has=(criteriaByP[pr.id]||[]).some(cr=>(indsByC[cr.id]||[]).some(ind=>indicatorMatches(ind)));
+      if(has)next[pr.id]=true;
+    });
+    setOpenPrinciples(next);
+  },[searchText,statusFilter,verifyFilter]);
+
+  function patchItem(id,patch){
+    setItems(v=>v.map(x=>x.id===id?{...x,...patch}:x));
+    setDirtyItems(v=>({...v,[id]:true}));
+  }
+
+  function clearFilters(){setSearchText('');setStatusFilter('All');setVerifyFilter('All')}
+  function focusGaps(){setSearchText('');setVerifyFilter('All');setStatusFilter('Not Fulfilled')}
+  function focusReview(){setSearchText('');setStatusFilter('Fulfilled');setVerifyFilter('Pending')}
+  function expandAll(){setOpenPrinciples(Object.fromEntries(principles.map(x=>[x.id,true])))}
+  function collapseAll(){setOpenPrinciples({});setOpenItems({})}
 
   async function saveItem(indicatorId){
     const item=itemMap[indicatorId];if(!item)return;
@@ -156,6 +205,7 @@ export default function SustainabilityAssessment(){
       if(item.self_status==='Not Fulfilled'){
         const ap=await supabase.from('sims_action_plans').upsert({assessment_item_id:item.id,status:'Open',created_by:u.data.user?.id||null,updated_at:new Date().toISOString()},{onConflict:'assessment_item_id'});if(ap.error)throw ap.error;
       }
+      setDirtyItems(v=>{const n={...v};delete n[item.id];return n});
       setNotice('Assessment berhasil disimpan.');
     }catch(e){setError(e.message||String(e))}finally{setSavingId('')}
   }
@@ -193,18 +243,23 @@ export default function SustainabilityAssessment(){
       .sims-company-info{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.sims-company-info>div{background:#f8fbf9;border:1px solid #e5eee8;border-radius:12px;padding:12px 14px}.sims-company-info span{display:block;font-size:9px;letter-spacing:.07em;color:#7a8a81;font-weight:800;text-transform:uppercase;margin-bottom:5px}.sims-company-info strong{font-size:13px;color:#153f2d}.sims-company-info small{display:block;margin-top:5px;color:#78887f;line-height:1.35}.sims-sites{grid-column:1/-1}
       .sims-loading{display:flex;gap:12px;align-items:center;background:#fff;border:1px solid #dfe9e3;border-radius:14px;padding:18px;margin-bottom:18px}.sims-loading-dot{width:12px;height:12px;border-radius:50%;background:#1d6c49;box-shadow:0 0 0 6px #e8f4ec}.sims-loading strong,.sims-loading span{display:block}.sims-loading span{font-size:11px;color:#7a8a81;margin-top:3px}
       .sims-master-missing{display:flex;gap:14px;align-items:flex-start;background:#fff8e8;border:1px solid #eed89e;border-radius:14px;padding:17px 18px;margin-bottom:18px;color:#6d5312}.sims-master-icon{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#ffe5a7;font-weight:900}.sims-master-missing strong{display:block;color:#65480c}.sims-master-missing p{margin:5px 0 0;font-size:12px;line-height:1.5}
-      .sims-assessment-hero{display:grid;grid-template-columns:1.1fr 1.4fr auto;gap:18px;align-items:center;background:linear-gradient(135deg,#0d5137,#0a3e2b);color:white;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 12px 28px rgba(9,62,42,.13)}
+      .sims-assessment-hero{display:grid;grid-template-columns:1.05fr 1.55fr auto;gap:18px;align-items:center;background:linear-gradient(135deg,#0d5137,#0a3e2b);color:white;border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 12px 28px rgba(9,62,42,.13)}
       .sims-score>span{font-size:10px;letter-spacing:.1em;opacity:.72}.sims-score>strong{display:block;font-size:50px;line-height:1;margin:7px 0 10px}.sims-score small{opacity:.72;font-size:10px}.sims-hero-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.18);overflow:hidden;margin-bottom:8px}.sims-hero-progress i{display:block;height:100%;background:#d7f36a;border-radius:999px}
       .sims-hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sims-hero-stats>div{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px}.sims-hero-stats span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;opacity:.7}.sims-hero-stats strong{font-size:22px}.sims-hero-actions{display:flex;flex-direction:column;gap:8px}.sims-hero-actions .secondary-btn{background:rgba(255,255,255,.12);color:white;border:1px solid rgba(255,255,255,.18);text-align:center}.sims-hero-actions .primary-btn{background:#d7f36a;color:#173426;text-align:center}
+      .sims-work-progress{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid #dce8e0;border-radius:14px;padding:13px 15px;margin-bottom:16px}.sims-work-progress>span{font-size:11px;font-weight:800;color:#315946}.sims-work-progress-track{height:7px;border-radius:999px;background:#edf3ef;overflow:hidden}.sims-work-progress-track i{display:block;height:100%;background:#44a06d;border-radius:999px}.sims-work-progress strong{font-size:12px;color:#174a32}
+      .sims-toolbar{position:sticky;top:10px;z-index:5;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border:1px solid #dce8e0;border-radius:15px;padding:12px;display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(150px,.65fr) minmax(150px,.65fr) auto;gap:10px;align-items:end;margin-bottom:18px;box-shadow:0 8px 22px rgba(25,65,44,.07)}
+      .sims-filter-field span{display:block;font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#718379;margin-bottom:5px}.sims-filter-field input,.sims-filter-field select{width:100%;height:38px;border:1px solid #d7e3dc;border-radius:10px;padding:0 11px;background:#fff;color:#244735;outline:none}.sims-filter-field input:focus,.sims-filter-field select:focus{border-color:#5c9d78;box-shadow:0 0 0 3px #edf7f1}
+      .sims-toolbar-actions{display:flex;gap:6px;flex-wrap:wrap}.sims-tool-btn{height:38px;border:1px solid #d7e3dc;border-radius:10px;background:#f8fbf9;color:#315946;padding:0 11px;font-size:11px;font-weight:700;cursor:pointer}.sims-tool-btn:hover{background:#edf6f0}.sims-tool-btn.active{background:#e7f5ec;border-color:#9fc8ae;color:#125132}.sims-filter-summary{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:2px;font-size:11px;color:#718379}.sims-filter-summary strong{color:#254f39}.sims-filter-summary button{border:0;background:none;color:#1b6c48;font-size:11px;font-weight:800;cursor:pointer}
       .sims-section-intro{display:flex;gap:12px;align-items:center;margin:4px 0 14px}.sims-section-no{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:#173f2d;color:#fff;font-weight:800}.sims-section-intro h2{margin:0 0 3px;font-size:18px;color:#143e2c}.sims-section-intro p{margin:0;color:#7b8b82;font-size:12px}
       .sims-evidence-req{background:#fff8e9;border:1px solid #eee0b7;border-radius:10px;padding:12px 14px;margin-bottom:14px}.sims-evidence-req strong{font-size:11px;color:#6e5718}.sims-evidence-req p{margin:5px 0 0;font-size:12px;line-height:1.5;color:#655d45}.sims-no-evidence{font-size:11px;color:#87958d}
-      @media(max-width:1000px){.sims-company-info{grid-template-columns:1fr 1fr}.sims-assessment-hero{grid-template-columns:1fr}.sims-hero-actions{flex-direction:row}.sims-hero-stats{grid-template-columns:repeat(2,1fr)}}
-      @media(max-width:650px){.sims-company-head{flex-direction:column}.sims-company-info{grid-template-columns:1fr}.sims-sites{grid-column:auto}.sims-hero-actions{flex-direction:column}}
+      .sims-row-meta{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.sims-mini-badge{font-size:9px;font-weight:800;border-radius:999px;padding:4px 7px;background:#edf3ef;color:#587064;white-space:nowrap}.sims-mini-badge.evidence{background:#eef4ff;color:#355c8d}.sims-mini-badge.unsaved{background:#fff3d7;color:#805b08}.sims-empty-filter{background:#fff;border:1px dashed #cfded5;border-radius:14px;padding:28px;text-align:center;color:#718379}.sims-empty-filter strong{display:block;color:#244735;margin-bottom:5px}
+      @media(max-width:1100px){.sims-toolbar{grid-template-columns:1fr 1fr}.sims-filter-summary{grid-column:1/-1}.sims-toolbar-actions{grid-column:1/-1}.sims-company-info{grid-template-columns:1fr 1fr}.sims-assessment-hero{grid-template-columns:1fr}.sims-hero-actions{flex-direction:row}.sims-hero-stats{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:650px){.sims-company-head{flex-direction:column}.sims-company-info{grid-template-columns:1fr}.sims-sites{grid-column:auto}.sims-hero-actions{flex-direction:column}.sims-toolbar{position:static;grid-template-columns:1fr}.sims-toolbar-actions{grid-column:auto}.sims-filter-summary{grid-column:auto;align-items:flex-start;flex-direction:column}.sims-work-progress{grid-template-columns:1fr}.sims-row-meta{justify-content:flex-start}}
     `}</style>
 
-    <div className="page-heading"><div><div className={styles.eyebrow}>SIMS · SUSTAINABILITY MANAGEMENT</div><h1>Sustainability Assessment</h1><p>Pilih PT, lalu assessment langsung dimuat dari master Principle, Criterion, dan Indicator SIMS.</p></div></div>
+    <div className="page-heading"><div><div className={styles.eyebrow}>SIMS · SUSTAINABILITY MANAGEMENT</div><h1>Sustainability Assessment</h1><p>Pilih PT, standard dan tahun. Assessment langsung dimuat dari master SIMS tanpa upload Excel.</p></div></div>
 
-    <SimsContextBar {...{companies,standards,companyId,setCompanyId,standardId,setStandardId,year,setYear,onOpen:openAssessment,loading}} hideOpenButton helperText="Tidak perlu upload Excel saat assessment. Setelah PT dipilih, form assessment tampil otomatis."/>
+    <SimsContextBar {...{companies,standards,companyId,setCompanyId,standardId,setStandardId,year,setYear,onOpen:openAssessment,loading}} hideOpenButton helperText="Pilih PT, standard dan tahun. Form assessment akan tampil otomatis."/>
 
     {error?<div className="sync-error"><strong>SIMS error</strong><span>{error}</span></div>:null}
     {notice?<div className={styles.notice}>{notice}</div>:null}
@@ -222,38 +277,57 @@ export default function SustainabilityAssessment(){
 
     {loading?<section className="sims-loading"><div className="sims-loading-dot"></div><div><strong>Loading assessment…</strong><span>Menyiapkan indikator untuk PT yang dipilih.</span></div></section>:null}
 
-    {!loading&&masterMissing?<section className="sims-master-missing"><div className="sims-master-icon">!</div><div><strong>Master indikator belum tersedia di database.</strong><p>User tidak perlu upload Excel. Master ISPO Permentan 33/2025 cukup dimuat satu kali oleh administrator ke Supabase, lalu seluruh PT langsung menggunakan master yang sama.</p></div></section>:null}
+    {!loading&&masterMissing?<section className="sims-master-missing"><div className="sims-master-icon">!</div><div><strong>Master indikator belum tersedia di database.</strong><p>Standard yang dipilih belum memiliki Principle, Criterion dan Indicator aktif. Master cukup dimuat satu kali oleh administrator di Supabase.</p></div></section>:null}
 
     {!loading&&assessment?<>
       <section className="sims-assessment-hero">
         <div className="sims-score"><span>OVERALL COMPLIANCE</span><strong>{counts.compliance}%</strong><div className="sims-hero-progress"><i style={{width:`${counts.compliance}%`}}/></div><small>Fulfilled + Verified / total active indicator</small></div>
-        <div className="sims-hero-stats"><div><span>Total Indicator</span><strong>{counts.total}</strong></div><div><span>Verified</span><strong>{counts.verified}</strong></div><div><span>Need Review</span><strong>{counts.pending}</strong></div><div><span>Gap</span><strong>{counts.gaps}</strong></div></div>
+        <div className="sims-hero-stats"><div><span>Total Indicator</span><strong>{counts.total}</strong></div><div><span>Assessed</span><strong>{counts.assessed}</strong></div><div><span>Verified</span><strong>{counts.verified}</strong></div><div><span>Gap</span><strong>{counts.gaps}</strong></div></div>
         <div className="sims-hero-actions"><Link href="/sims/action-plan" className="secondary-btn">Open Action Plan</Link><Link href="/sims/compliance" className="primary-btn">View Compliance</Link></div>
+      </section>
+
+      <section className="sims-work-progress"><span>Assessment Progress</span><div className="sims-work-progress-track"><i style={{width:`${counts.assessmentProgress}%`}}/></div><strong>{counts.assessed}/{counts.total} · {counts.assessmentProgress}%</strong></section>
+
+      <section className="sims-toolbar">
+        <label className="sims-filter-field"><span>Search Indicator</span><input value={searchText} onChange={e=>setSearchText(e.target.value)} placeholder="Cari kode, indikator, kriteria…"/></label>
+        <label className="sims-filter-field"><span>Assessment Status</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option>{SELF_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
+        <label className="sims-filter-field"><span>Verifier Status</span><select value={verifyFilter} onChange={e=>setVerifyFilter(e.target.value)}><option>All</option>{VERIFY_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
+        <div className="sims-toolbar-actions"><button className={`sims-tool-btn ${statusFilter==='Not Fulfilled'?'active':''}`} onClick={focusGaps}>Gap ({counts.gaps})</button><button className={`sims-tool-btn ${statusFilter==='Fulfilled'&&verifyFilter==='Pending'?'active':''}`} onClick={focusReview}>Need Review ({counts.pending})</button><button className="sims-tool-btn" onClick={expandAll}>Expand</button><button className="sims-tool-btn" onClick={collapseAll}>Collapse</button></div>
+        <div className="sims-filter-summary"><span>Menampilkan <strong>{visibleIndicatorCount}</strong> dari <strong>{counts.total}</strong> indikator.</span>{hasActiveFilter?<button onClick={clearFilters}>Clear filter</button>:<span>Gunakan filter untuk fokus pada gap atau indikator yang belum diverifikasi.</span>}</div>
       </section>
 
       <section className="sims-section-intro"><div className="sims-section-no">1</div><div><h2>Sustainability Assessment</h2><p>Isi status, penjelasan, evidence, dan verification untuk setiap indikator.</p></div></section>
 
-      <section className={styles.tree}>
+      {visibleIndicatorCount===0?<section className="sims-empty-filter"><strong>Tidak ada indikator yang sesuai filter.</strong><span>Ubah pencarian atau klik Clear filter.</span></section>:<section className={styles.tree}>
         {principles.map(pr=>{
+          const pCriteria=criteriaByP[pr.id]||[];
+          const visibleCriteria=pCriteria.map(cr=>({...cr,_visible:(indsByC[cr.id]||[]).filter(ind=>indicatorMatches(ind))})).filter(cr=>cr._visible.length);
+          if(!visibleCriteria.length)return null;
           const pPct=principleProgress(pr),isOpen=!!openPrinciples[pr.id];
+          const pVisibleCount=visibleCriteria.reduce((n,cr)=>n+cr._visible.length,0);
           return <article className={styles.principle} key={pr.id}>
             <button className={styles.principleHead} onClick={()=>setOpenPrinciples(v=>({...v,[pr.id]:!v[pr.id]}))}>
-              <div><span className={styles.code}>PRINCIPLE {pr.code}</span><h2>{pr.title}</h2></div>
+              <div><span className={styles.code}>PRINCIPLE {pr.code} · {pVisibleCount} INDICATOR</span><h2>{pr.title}</h2></div>
               <div className={styles.progressWrap}><div className={styles.progress}><i style={{width:`${pPct}%`}}/></div><strong>{pPct}%</strong><span>{isOpen?'−':'+'}</span></div>
             </button>
             {isOpen?<div className={styles.criteriaList}>
-              {(criteriaByP[pr.id]||[]).map(cr=>{
+              {visibleCriteria.map(cr=>{
                 const cIndicators=indsByC[cr.id]||[];
+                const cVisible=cr._visible;
                 const cVerified=cIndicators.filter(ind=>{const it=itemMap[ind.id];return it?.self_status==='Fulfilled'&&it?.verifier_status==='Verified'}).length;
                 const cPct=cIndicators.length?Math.round(cVerified/cIndicators.length*100):0;
                 return <section className={styles.criterion} key={cr.id}>
-                  <div className={styles.criterionHead}><div><span className={styles.code}>CRITERION {cr.code}</span><h3>{cr.title}</h3></div><span>{cPct}% compliant</span></div>
+                  <div className={styles.criterionHead}><div><span className={styles.code}>CRITERION {cr.code} · {cVisible.length}/{cIndicators.length} shown</span><h3>{cr.title}</h3></div><span>{cPct}% compliant</span></div>
                   <div className={styles.indicatorList}>
-                    {cIndicators.map(ind=>{
+                    {cVisible.map(ind=>{
                       const item=itemMap[ind.id];if(!item)return null;
-                      const isItemOpen=!!openItems[ind.id],files=evidenceByItem[item.id]||[];
+                      const isItemOpen=!!openItems[ind.id],files=evidenceByItem[item.id]||[],isDirty=!!dirtyItems[item.id];
                       return <div className={styles.indicator} key={ind.id}>
-                        <button className={styles.indicatorRow} onClick={()=>setOpenItems(v=>({...v,[ind.id]:!v[ind.id]}))}><span className={styles.code}>{ind.code}</span><span className={styles.indicatorText}>{ind.description}</span><span className={`${styles.pill} ${selfStatusClass(item.self_status)}`}>{item.self_status}</span><span>{isItemOpen?'−':'+'}</span></button>
+                        <button className={styles.indicatorRow} onClick={()=>setOpenItems(v=>({...v,[ind.id]:!v[ind.id]}))}>
+                          <span className={styles.code}>{ind.code}</span>
+                          <span className={styles.indicatorText}>{ind.description}</span>
+                          <span className="sims-row-meta"><span className={`${styles.pill} ${selfStatusClass(item.self_status)}`}>{item.self_status}</span><span className={`${styles.pill} ${verifyClass(item.verifier_status)}`}>{item.verifier_status}</span>{files.length?<span className="sims-mini-badge evidence">{files.length} evidence</span>:null}{isDirty?<span className="sims-mini-badge unsaved">Unsaved</span>:null}<span>{isItemOpen?'−':'+'}</span></span>
+                        </button>
                         {isItemOpen?<div className={styles.editor}>
                           <div className={styles.requirement}><strong>INDICATOR REQUIREMENT</strong><p>{ind.description}</p></div>
                           {ind.object_evidence?<div className="sims-evidence-req"><strong>OBJECT EVIDENCE</strong><p>{ind.object_evidence}</p></div>:null}
@@ -264,7 +338,7 @@ export default function SustainabilityAssessment(){
                             <label className={`form-field ${styles.full}`}><span>Verifier Notes</span><textarea rows="2" value={item.verifier_notes||''} onChange={e=>patchItem(item.id,{verifier_notes:e.target.value})} placeholder="Catatan verifikasi…"/></label>
                           </div>
                           <div className={styles.evidenceBox}><div><strong>Supporting Evidence</strong><span>{files.length} file(s)</span></div><div className={styles.evidenceList}>{files.length?files.map(ev=><button key={ev.id} className={styles.fileChip} onClick={()=>openEvidence(ev)}>{ev.file_name}</button>):<span className="sims-no-evidence">Belum ada evidence.</span>}</div><label className={styles.uploadBtn}>+ Upload Evidence<input hidden type="file" onChange={e=>uploadEvidence(item,e.target.files?.[0])}/></label></div>
-                          <div className={styles.saveRow}><button className="primary-btn" disabled={savingId===item.id} onClick={()=>saveItem(ind.id)}>{savingId===item.id?'Saving…':'Save Assessment'}</button><span className={`${styles.pill} ${verifyClass(item.verifier_status)}`}>{item.verifier_status}</span>{item.self_status==='Not Fulfilled'?<span className={styles.gapNote}>Gap ini otomatis masuk Sustainability Action Plan.</span>:null}</div>
+                          <div className={styles.saveRow}><button className="primary-btn" disabled={savingId===item.id} onClick={()=>saveItem(ind.id)}>{savingId===item.id?'Saving…':isDirty?'Save Changes':'Save Assessment'}</button><span className={`${styles.pill} ${verifyClass(item.verifier_status)}`}>{item.verifier_status}</span>{item.self_status==='Not Fulfilled'?<span className={styles.gapNote}>Gap ini otomatis masuk Sustainability Action Plan.</span>:null}</div>
                         </div>:null}
                       </div>
                     })}
@@ -274,7 +348,7 @@ export default function SustainabilityAssessment(){
             </div>:null}
           </article>
         })}
-      </section>
+      </section>}
     </>:null}
 
     {!loading&&!companyId?<section className={styles.empty}><strong>Select Company / PT</strong><span>Pilih PT pada bagian atas. Assessment akan terbuka otomatis tanpa upload Excel.</span></section>:null}
