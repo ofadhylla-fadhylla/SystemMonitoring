@@ -5,190 +5,50 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 
 const groups = [
-  {
-    key: 'grievance',
-    label: 'Grievance',
-    icon: '⚑',
-    items: [
-      ['/grievances', 'Grievance Tracker'],
-      ['/actions', 'Action Monitoring'],
-    ],
-  },
-  {
-    key: 'certification',
-    label: 'Certification',
-    icon: '◈',
-    items: [
-      ['/audits', 'Audit Monitoring'],
-      ['/certificates', 'Certification Monitoring'],
-      ['/quotations', 'Penawaran Harga'],
-    ],
-  },
-  {
-    key: 'sims',
-    label: 'SIMS',
-    icon: '◫',
-    items: [
-      ['/sims/assessment', 'Sustainability Assessment'],
-      ['/sims/action-plan', 'Sustainability Action Plan'],
-      ['/sims/compliance', 'Sustainability Compliance Level'],
-    ],
-  },
-  {
-    key: 'risk',
-    label: 'Risk Assessment',
-    icon: '◎',
-    items: [
-      ['/spatial-monitoring', 'Monitoring Spasial'],
-      ['/non-spatial-monitoring', 'Monitoring Non Spasial'],
-    ],
-  },
+  { key:'grievance', label:'Grievance', icon:'grievance', tone:'orange', items:[['/grievances','Grievance Tracker'],['/actions','Action Monitoring']] },
+  { key:'certification', label:'Certification', icon:'certificate', tone:'blue', items:[['/audits','Audit Monitoring'],['/certificates','Certification Monitoring'],['/quotations','Penawaran Harga']] },
+  { key:'sims', label:'SIMS', icon:'sims', tone:'green', items:[['/sims/assessment','Sustainability Assessment'],['/sims/action-plan','Sustainability Action Plan'],['/sims/compliance','Sustainability Compliance Level']] },
+  { key:'risk', label:'Risk Assessment', icon:'risk', tone:'cyan', items:[['/spatial-monitoring','Monitoring Spasial'],['/non-spatial-monitoring','Monitoring Non Spasial']] },
 ];
 
-const standalone = [
-  ['/', 'Dashboard', '⌂'],
-  ['/master-data', 'Master Company & Site', '▦'],
-  ['/weekly-report', 'Weekly Report', '▧'],
-];
+function isPathActive(pathname, href){ if(href==='/') return pathname==='/'; return pathname===href||pathname.startsWith(`${href}/`); }
 
-function isPathActive(pathname, href) {
-  if (href === '/') return pathname === '/';
-  return pathname === href || pathname.startsWith(`${href}/`);
+export default function Sidebar(){
+  const pathname=usePathname();
+  const [openGroups,setOpenGroups]=useState(Object.fromEntries(groups.map(g=>[g.key,g.items.some(([h])=>isPathActive(pathname,h))])));
+  useEffect(()=>{setOpenGroups(current=>{const next={...current};groups.forEach(g=>{if(g.items.some(([h])=>isPathActive(pathname,h)))next[g.key]=true});return next})},[pathname]);
+  const toggleGroup=key=>setOpenGroups(current=>({...current,[key]:!current[key]}));
+
+  return <aside className="sidebar">
+    <style>{`
+      .brand.smd-brand{gap:11px;align-items:center;padding:3px 2px 16px}.smd-logo-shell{width:48px;height:48px;flex:0 0 48px;display:grid;place-items:center;border-radius:14px;background:linear-gradient(145deg,#0a78d1,#0fbfd0 54%,#42c833);box-shadow:0 8px 20px rgba(0,174,198,.18);overflow:hidden;border:1px solid rgba(255,255,255,.16)}.smd-logo-shell svg{width:43px;height:43px;display:block}.smd-brand-copy{min-width:0}.smd-brand-title{font-weight:900;font-size:18px;letter-spacing:.05em;line-height:1;color:#fff}.smd-brand-subtitle{font-size:7.5px;letter-spacing:.13em;color:#99b5a6;margin-top:4px;font-weight:700;white-space:nowrap}
+      .sidebar-nav{display:flex;flex-direction:column;gap:4px}.sidebar-group{margin:2px 0}.sidebar-group-button{width:100%;border:0;background:transparent;color:#d8e2dc;display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:11px;font:inherit;font-size:14px;cursor:pointer;text-align:left;transition:.16s ease}.sidebar-group-button:hover,.sidebar-group-button.active{background:#1a3829;color:#fff}.sidebar-group-button.open{background:#173426;color:#fff}.sidebar-group-label{flex:1;font-weight:700}.sidebar-chevron{font-size:15px;color:#9fb0a6;transition:transform .18s ease;line-height:1}.sidebar-chevron.open{transform:rotate(90deg);color:#d7f36a}
+      .nav-visual{width:31px;height:31px;flex:0 0 31px;border-radius:9px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}.nav-visual svg{width:17px;height:17px;stroke:currentColor}.nav-visual.lime{background:linear-gradient(145deg,#d7f36a,#9ccf45);color:#153c2c}.nav-visual.orange{background:linear-gradient(145deg,#ffc662,#e88635);color:#41240c}.nav-visual.blue{background:linear-gradient(145deg,#70c7ff,#2579dc);color:#062d57}.nav-visual.green{background:linear-gradient(145deg,#72e1a0,#20a765);color:#073b25}.nav-visual.cyan{background:linear-gradient(145deg,#72e8e7,#16a5c4);color:#073a46}.nav-visual.purple{background:linear-gradient(145deg,#c2a7ff,#8466dc);color:#2b1d58}.nav-visual.slate{background:linear-gradient(145deg,#c2d2cb,#718980);color:#173229}
+      .sidebar-submenu{margin:3px 0 7px 28px;padding:3px 0 3px 13px;border-left:1px solid #335244;display:flex;flex-direction:column;gap:2px}.sidebar-subitem{position:relative;color:#bfcfc5;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.25;transition:.16s ease}.sidebar-subitem:hover{background:#183126;color:#fff}.sidebar-subitem.active{background:#214331;color:#fff;font-weight:700}.sidebar-subitem.active:before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:99px;background:#d7f36a}
+      .nav-item{display:flex;align-items:center;gap:11px!important;padding:10px 11px!important;border-radius:11px}.nav-item.active{background:#1b3728;color:#fff;font-weight:700}.nav-item>span:last-child{font-size:14px}.sidebar-section-separator{height:1px;background:#213b2d;margin:7px 8px}.sidebar-note{margin-top:14px!important}.dash-hero .eyebrow,.dash-hero p{display:none!important}.dash-hero h1{margin-bottom:0!important}
+      @media(max-width:1000px){.smd-brand-copy,.sidebar-group-label,.sidebar-chevron,.sidebar-submenu,.nav-item>span:last-child{display:none}.brand.smd-brand{justify-content:center}.smd-logo-shell{width:42px;height:42px;flex-basis:42px}.smd-logo-shell svg{width:38px;height:38px}.sidebar-group-button,.nav-item{justify-content:center!important;padding:9px!important}.nav-visual{width:32px;height:32px;flex-basis:32px}}
+    `}</style>
+
+    <div className="brand smd-brand"><div className="smd-logo-shell" aria-label="SMD logo"><SmdLogo/></div><div className="smd-brand-copy"><div className="smd-brand-title">SMD</div><div className="smd-brand-subtitle">SYSTEM MONITORING DASHBOARD</div></div></div>
+    <nav className="sidebar-nav">
+      <Link href="/" className={`nav-item ${isPathActive(pathname,'/')?'active':''}`}><span className="nav-visual lime"><NavIcon type="home"/></span><span>Dashboard</span></Link>
+      {groups.slice(0,2).map(group=><SidebarGroup key={group.key} {...{group,pathname,openGroups,toggleGroup}}/>)}
+      <div className="sidebar-section-separator"/>
+      <Link href="/master-data" className={`nav-item ${isPathActive(pathname,'/master-data')?'active':''}`}><span className="nav-visual purple"><NavIcon type="master"/></span><span>Master Company & Site</span></Link>
+      <div className="sidebar-section-separator"/>
+      {groups.slice(2).map(group=><SidebarGroup key={group.key} {...{group,pathname,openGroups,toggleGroup}}/>)}
+      <div className="sidebar-section-separator"/>
+      <Link href="/weekly-report" className={`nav-item ${isPathActive(pathname,'/weekly-report')?'active':''}`}><span className="nav-visual slate"><NavIcon type="report"/></span><span>Weekly Report</span></Link>
+    </nav>
+    <div className="sidebar-note"><strong>Supabase Mode</strong><span>Grievance, certification, SIMS, risk assessment, master company & weekly reporting.</span></div>
+  </aside>
 }
 
-export default function Sidebar() {
-  const pathname = usePathname();
-  const initialOpen = Object.fromEntries(
-    groups.map(group => [
-      group.key,
-      group.items.some(([href]) => isPathActive(pathname, href)),
-    ])
-  );
-  const [openGroups, setOpenGroups] = useState(initialOpen);
-
-  useEffect(() => {
-    setOpenGroups(current => {
-      const next = { ...current };
-      groups.forEach(group => {
-        if (group.items.some(([href]) => isPathActive(pathname, href))) next[group.key] = true;
-      });
-      return next;
-    });
-  }, [pathname]);
-
-  const toggleGroup = key => {
-    setOpenGroups(current => ({ ...current, [key]: !current[key] }));
-  };
-
-  return (
-    <aside className="sidebar">
-      <style>{`
-        .sidebar-nav{display:flex;flex-direction:column;gap:3px}
-        .sidebar-group{margin:2px 0}
-        .sidebar-group-button{width:100%;border:0;background:transparent;color:#d8e2dc;display:flex;align-items:center;gap:12px;padding:12px 13px;border-radius:10px;font:inherit;font-size:14px;cursor:pointer;text-align:left;transition:.16s ease}
-        .sidebar-group-button:hover,.sidebar-group-button.active{background:#1b3728;color:#fff}
-        .sidebar-group-button.open{background:#173426;color:#fff}
-        .sidebar-group-label{flex:1;font-weight:700}
-        .sidebar-chevron{font-size:15px;color:#9fb0a6;transition:transform .18s ease;line-height:1}
-        .sidebar-chevron.open{transform:rotate(90deg);color:#d7f36a}
-        .sidebar-submenu{margin:2px 0 7px 24px;padding:3px 0 3px 13px;border-left:1px solid #335244;display:flex;flex-direction:column;gap:2px}
-        .sidebar-subitem{position:relative;color:#bfcfc5;padding:9px 10px;border-radius:8px;font-size:12.5px;line-height:1.25;transition:.16s ease}
-        .sidebar-subitem:hover{background:#183126;color:#fff}
-        .sidebar-subitem.active{background:#214331;color:#fff;font-weight:700}
-        .sidebar-subitem.active:before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:99px;background:#d7f36a}
-        .nav-item.active{background:#1b3728;color:#fff;font-weight:700}
-        .sidebar-section-separator{height:1px;background:#213b2d;margin:7px 8px}
-        .dash-hero .eyebrow,.dash-hero p{display:none!important}
-        .dash-hero h1{margin-bottom:0!important}
-        @media(max-width:1000px){
-          .sidebar-group-label,.sidebar-chevron,.sidebar-submenu{display:none}
-          .sidebar-group-button{justify-content:center;padding:12px 13px}
-          .sidebar-group-button .nav-icon{width:22px}
-        }
-      `}</style>
-
-      <div className="brand">
-        <div className="brand-mark">SM</div>
-        <div><div className="brand-title">SYSTEM</div><div className="brand-subtitle">MONITORING</div></div>
-      </div>
-
-      <nav className="sidebar-nav">
-        <Link href="/" className={`nav-item ${isPathActive(pathname, '/') ? 'active' : ''}`}>
-          <span className="nav-icon">⌂</span><span>Dashboard</span>
-        </Link>
-
-        {groups.slice(0, 2).map(group => {
-          const groupActive = group.items.some(([href]) => isPathActive(pathname, href));
-          const open = !!openGroups[group.key];
-          return (
-            <div className="sidebar-group" key={group.key}>
-              <button
-                type="button"
-                className={`sidebar-group-button ${groupActive ? 'active' : ''} ${open ? 'open' : ''}`}
-                onClick={() => toggleGroup(group.key)}
-                aria-expanded={open}
-              >
-                <span className="nav-icon">{group.icon}</span>
-                <span className="sidebar-group-label">{group.label}</span>
-                <span className={`sidebar-chevron ${open ? 'open' : ''}`}>›</span>
-              </button>
-              {open ? (
-                <div className="sidebar-submenu">
-                  {group.items.map(([href, label]) => (
-                    <Link key={href} href={href} className={`sidebar-subitem ${isPathActive(pathname, href) ? 'active' : ''}`}>
-                      {label}
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-
-        <div className="sidebar-section-separator" />
-        <Link href="/master-data" className={`nav-item ${isPathActive(pathname, '/master-data') ? 'active' : ''}`}>
-          <span className="nav-icon">▦</span><span>Master Company & Site</span>
-        </Link>
-        <div className="sidebar-section-separator" />
-
-        {groups.slice(2).map(group => {
-          const groupActive = group.items.some(([href]) => isPathActive(pathname, href));
-          const open = !!openGroups[group.key];
-          return (
-            <div className="sidebar-group" key={group.key}>
-              <button
-                type="button"
-                className={`sidebar-group-button ${groupActive ? 'active' : ''} ${open ? 'open' : ''}`}
-                onClick={() => toggleGroup(group.key)}
-                aria-expanded={open}
-              >
-                <span className="nav-icon">{group.icon}</span>
-                <span className="sidebar-group-label">{group.label}</span>
-                <span className={`sidebar-chevron ${open ? 'open' : ''}`}>›</span>
-              </button>
-              {open ? (
-                <div className="sidebar-submenu">
-                  {group.items.map(([href, label]) => (
-                    <Link key={href} href={href} className={`sidebar-subitem ${isPathActive(pathname, href) ? 'active' : ''}`}>
-                      {label}
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-
-        <div className="sidebar-section-separator" />
-        <Link href="/weekly-report" className={`nav-item ${isPathActive(pathname, '/weekly-report') ? 'active' : ''}`}>
-          <span className="nav-icon">▧</span><span>Weekly Report</span>
-        </Link>
-      </nav>
-
-      <div className="sidebar-note">
-        <strong>Supabase Mode</strong>
-        <span>Grievance, certification, SIMS, risk assessment, master company & weekly reporting.</span>
-      </div>
-    </aside>
-  );
+function SidebarGroup({group,pathname,openGroups,toggleGroup}){
+  const active=group.items.some(([h])=>isPathActive(pathname,h));const open=!!openGroups[group.key];
+  return <div className="sidebar-group"><button type="button" className={`sidebar-group-button ${active?'active':''} ${open?'open':''}`} onClick={()=>toggleGroup(group.key)} aria-expanded={open}><span className={`nav-visual ${group.tone}`}><NavIcon type={group.icon}/></span><span className="sidebar-group-label">{group.label}</span><span className={`sidebar-chevron ${open?'open':''}`}>›</span></button>{open?<div className="sidebar-submenu">{group.items.map(([href,label])=><Link key={href} href={href} className={`sidebar-subitem ${isPathActive(pathname,href)?'active':''}`}>{label}</Link>)}</div>:null}</div>
 }
+
+function SmdLogo(){return <svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><defs><linearGradient id="smdRing" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop stopColor="#075FE0"/><stop offset=".5" stopColor="#11C4D5"/><stop offset="1" stopColor="#58D62D"/></linearGradient></defs><circle cx="32" cy="32" r="25" stroke="rgba(255,255,255,.9)" strokeWidth="2"/><path d="M32 13 47 19v11c0 10-6.5 16.7-15 21-8.5-4.3-15-11-15-21V19l15-6Z" fill="rgba(5,51,74,.86)" stroke="white" strokeWidth="2"/><path d="M31.5 23c-6-7-11-5.4-14-4.1 6.8 1.1 10.2 4.2 13.3 8.3-5.5-3.2-9.3-1.7-11.8 0 5.5.3 8.9 2.2 12 5.2" stroke="#6FD6FF" strokeWidth="2.2" strokeLinecap="round"/><path d="M32.5 23c5.7-7 10.8-5.4 13.8-4.1-6.4 1.1-10 4.2-13.2 8.3 5.4-3.2 9.1-1.7 11.6 0-5.3.3-8.6 2.2-11.7 5.2" stroke="#9AF05D" strokeWidth="2.2" strokeLinecap="round"/><path d="M32 23v15" stroke="white" strokeWidth="2.4" strokeLinecap="round"/><path d="M21 39h5v6h-5zm8-4h5v10h-5zm8-8h5v18h-5z" fill="url(#smdRing)"/><path d="m18 43 7-1 3 4 4-8 4 6 9-1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="32" r="4" fill="#0767E2" stroke="white" strokeWidth="1.5"/><circle cx="32" cy="8" r="4" fill="#12C2D0" stroke="white" strokeWidth="1.5"/><circle cx="54" cy="32" r="4" fill="#44D12E" stroke="white" strokeWidth="1.5"/><circle cx="20" cy="52" r="3.6" fill="#1188DB" stroke="white" strokeWidth="1.4"/><circle cx="44" cy="52" r="3.6" fill="#1BBEC2" stroke="white" strokeWidth="1.4"/></svg>}
+
+function NavIcon({type}){const p={fill:'none',stroke:'currentColor',strokeWidth:'1.8',strokeLinecap:'round',strokeLinejoin:'round'};if(type==='home')return <svg viewBox="0 0 24 24" {...p}><path d="m3 11 9-7 9 7"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>;if(type==='grievance')return <svg viewBox="0 0 24 24" {...p}><path d="M4 5h11l-1 5 1 5H4zM4 4v16"/><circle cx="18" cy="17" r="3"/><path d="m16.8 17 1 1 1.8-2"/></svg>;if(type==='certificate')return <svg viewBox="0 0 24 24" {...p}><rect x="4" y="3" width="16" height="13" rx="2"/><path d="M8 7h8M8 10h6m-5 6-1 5 4-2 4 2-1-5"/></svg>;if(type==='sims')return <svg viewBox="0 0 24 24" {...p}><path d="M4 19V8M10 19V4M16 19v-7M22 19H2m1-11 5-4 5 5 6-4"/></svg>;if(type==='risk')return <svg viewBox="0 0 24 24" {...p}><path d="M12 3 3.5 19h17zM12 9v4M12 17h.01"/></svg>;if(type==='master')return <svg viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="7" height="7" rx="1"/><rect x="14" y="4" width="7" height="7" rx="1"/><rect x="3" y="15" width="7" height="5" rx="1"/><rect x="14" y="15" width="7" height="5" rx="1"/></svg>;return <svg viewBox="0 0 24 24" {...p}><path d="M5 3h10l4 4v14H5zM15 3v5h5M8 12h8M8 16h8"/></svg>}
