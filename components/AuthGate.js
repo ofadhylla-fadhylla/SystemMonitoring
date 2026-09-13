@@ -50,9 +50,6 @@ export default function AuthGate({ children }) {
         return;
       }
 
-      // V8.23: prefer database-backed role when the production-hardening table exists.
-      // Before SUPABASE-PRODUCTION-HARDENING-V8-23.sql is run, the app safely falls back
-      // to the existing static role registry so deployment cannot lock current users out.
       const email=String(currentSession.user.email||'').toLowerCase();
       const roleResult=await supabase.from('app_user_roles').select('display_name,role,active').eq('email',email).maybeSingle();
       if (!active) return;
@@ -150,6 +147,11 @@ export default function AuthGate({ children }) {
           </div>
           <div className={styles.accountArea}>
             <NotificationCenter />
+            {currentUser.role==='admin' ? (
+              <button type="button" className={styles.signOutButton} onClick={()=>router.push('/access-control')}>
+                User Access
+              </button>
+            ) : null}
             <div className={styles.accountCopy}>
               <strong>{currentUser.name}</strong>
               <span>{roleLabel}</span>
