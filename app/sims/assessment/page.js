@@ -3,354 +3,189 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase, getSupabaseConfigError } from '../../../lib/supabaseClient';
-import SimsContextBar from '../../../components/SimsContextBar';
 import styles from '../sims.module.css';
 
-const SELF_STATUSES=['Not Started','Fulfilled','Not Fulfilled','N/A'];
-const VERIFY_STATUSES=['Pending','Verified','Need Revision'];
-const safeName=v=>String(v||'file').replace(/[^a-zA-Z0-9._-]+/g,'_');
-
-function selfStatusClass(status){
-  if(status==='Fulfilled') return styles.good;
-  if(status==='Not Fulfilled') return styles.bad;
-  if(status==='N/A') return styles.mutedPill;
-  return styles.neutral;
-}
-function verifyClass(status){
-  if(status==='Verified') return styles.good;
-  if(status==='Need Revision') return styles.bad;
-  return styles.warn;
-}
+const SELF=['Not Started','Fulfilled','Not Fulfilled','N/A'];
+const VERIFY=['Pending','Verified','Need Revision'];
+const REPORTS=[
+  ['NDPE','NDPE Policy · KPN IMIS'],
+  ['ISPO','ISPO · Permentan 33/2025'],
+  ['RSPO','RSPO · P&C 2018'],
+  ['ISCC','ISCC · v4.1'],
+  ['INS','INS · mapping pending'],
+  ['EUDR','EUDR · mapping pending'],
+  ['CGF-FPCA','CGF-FPCA'],
+  ['GGLS1','GGLS1'],['GGLS4','GGLS4'],['GGL1D','GGL 1d'],['SDG','SDG']
+];
+const safe=v=>String(v||'report').replace(/[^a-zA-Z0-9._-]+/g,'_');
+const csv=v=>`"${String(v??'').replace(/"/g,'""')}"`;
 
 export default function SustainabilityAssessment(){
-  const [companies,setCompanies]=useState([]);
-  const [standards,setStandards]=useState([]);
-  const [companyId,setCompanyId]=useState('');
-  const [standardId,setStandardId]=useState('');
-  const [year,setYear]=useState(new Date().getFullYear());
-  const [sites,setSites]=useState([]);
-  const [assessment,setAssessment]=useState(null);
-  const [principles,setPrinciples]=useState([]);
-  const [criteria,setCriteria]=useState([]);
-  const [indicators,setIndicators]=useState([]);
-  const [items,setItems]=useState([]);
-  const [evidence,setEvidence]=useState([]);
-  const [loading,setLoading]=useState(false);
-  const [error,setError]=useState('');
-  const [notice,setNotice]=useState('');
-  const [masterMissing,setMasterMissing]=useState(false);
-  const [openPrinciples,setOpenPrinciples]=useState({});
-  const [openItems,setOpenItems]=useState({});
-  const [savingId,setSavingId]=useState('');
-  const [dirtyItems,setDirtyItems]=useState({});
-  const [searchText,setSearchText]=useState('');
-  const [statusFilter,setStatusFilter]=useState('All');
-  const [verifyFilter,setVerifyFilter]=useState('All');
+  const [companies,setCompanies]=useState([]),[companyId,setCompanyId]=useState(''),[year,setYear]=useState(new Date().getFullYear());
+  const [standard,setStandard]=useState(null),[sites,setSites]=useState([]),[principles,setPrinciples]=useState([]),[criteria,setCriteria]=useState([]),[indicators,setIndicators]=useState([]);
+  const [assessment,setAssessment]=useState(null),[items,setItems]=useState([]),[evidence,setEvidence]=useState([]),[mappings,setMappings]=useState([]);
+  const [loading,setLoading]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[savingId,setSavingId]=useState('');
+  const [openP,setOpenP]=useState({}),[openI,setOpenI]=useState({}),[dirty,setDirty]=useState({}),[search,setSearch]=useState(''),[status,setStatus]=useState('All');
+  const [reportType,setReportType]=useState('ISPO'),[showReport,setShowReport]=useState(false);
 
-  useEffect(()=>{loadMasters()},[]);
-
-  async function loadMasters(){
-    const ce=getSupabaseConfigError();
-    if(ce||!supabase){setError(ce||'Supabase not configured.');return;}
+  useEffect(()=>{(async()=>{
+    const ce=getSupabaseConfigError(); if(ce||!supabase){setError(ce||'Supabase not configured.');return}
     const [c,s]=await Promise.all([
       supabase.from('companies').select('id,company_code,company_name,region,province,status').eq('status','Active').order('company_code'),
-      supabase.from('sims_standards').select('*').eq('status','Active').order('name')
+      supabase.from('sims_standards').select('*').eq('code','NDPE-IMIS-KPN').eq('status','Active').maybeSingle()
     ]);
-    if(c.error||s.error){setError((c.error||s.error).message);return;}
-    setCompanies(c.data||[]);
-    setStandards(s.data||[]);
-    if(s.data?.[0]) setStandardId(s.data[0].id);
-  }
+    if(c.error||s.error){setError((c.error||s.error).message);return}
+    setCompanies(c.data||[]);setStandard(s.data||null);
+    if(!s.data)setError('Master NDPE-IMIS-KPN belum tersedia.');
+  })()},[]);
 
-  useEffect(()=>{
-    if(!companyId){setSites([]);return;}
-    (async()=>{
-      const q=await supabase.from('sites').select('id,site_name,province,location,status').eq('company_id',companyId).eq('status','Active').order('site_name');
-      if(!q.error) setSites(q.data||[]);
-    })();
-  },[companyId]);
+  useEffect(()=>{if(!companyId){setSites([]);return}(async()=>{
+    const q=await supabase.from('sites').select('id,site_name,status').eq('company_id',companyId).eq('status','Active').order('site_name');
+    if(!q.error)setSites(q.data||[]);
+  })()},[companyId]);
 
-  async function loadHierarchy(stdId){
-    const p=await supabase.from('sims_principles').select('*').eq('standard_id',stdId).order('sort_order');
-    if(p.error) throw p.error;
+  async function hierarchy(){
+    const p=await supabase.from('sims_principles').select('*').eq('standard_id',standard.id).order('sort_order');if(p.error)throw p.error;
     const pids=(p.data||[]).map(x=>x.id);
-    const c=pids.length?await supabase.from('sims_criteria').select('*').in('principle_id',pids).order('sort_order'):{data:[]};
-    if(c.error) throw c.error;
+    const c=pids.length?await supabase.from('sims_criteria').select('*').in('principle_id',pids).order('sort_order'):{data:[]};if(c.error)throw c.error;
     const cids=(c.data||[]).map(x=>x.id);
-    const i=cids.length?await supabase.from('sims_indicators').select('*').in('criterion_id',cids).eq('active',true).order('sort_order'):{data:[]};
-    if(i.error) throw i.error;
-    setPrinciples(p.data||[]);
-    setCriteria(c.data||[]);
-    setIndicators(i.data||[]);
-    return {principles:p.data||[],criteria:c.data||[],indicators:i.data||[]};
+    const i=cids.length?await supabase.from('sims_indicators').select('*').in('criterion_id',cids).eq('active',true).order('sort_order'):{data:[]};if(i.error)throw i.error;
+    setPrinciples(p.data||[]);setCriteria(c.data||[]);setIndicators(i.data||[]);
+    return {p:p.data||[],c:c.data||[],i:i.data||[]};
   }
 
   async function openAssessment(){
-    if(!companyId||!standardId)return;
-    setLoading(true);setError('');setNotice('');setMasterMissing(false);setDirtyItems({});
+    if(!companyId||!standard?.id)return;setLoading(true);setError('');setNotice('');setShowReport(false);setDirty({});
     try{
-      const hierarchy=await loadHierarchy(standardId);
-      const inds=hierarchy.indicators;
-      if(!inds.length){setAssessment(null);setItems([]);setEvidence([]);setMasterMissing(true);return;}
-
-      let q=await supabase.from('sims_assessments').select('*').eq('company_id',companyId).eq('standard_id',standardId).eq('assessment_year',year).maybeSingle();
-      if(q.error)throw q.error;
-      let a=q.data;
-      if(!a){
-        const u=await supabase.auth.getUser();
-        const ins=await supabase.from('sims_assessments').insert({company_id:companyId,standard_id:standardId,assessment_year:year,created_by:u.data.user?.id||null}).select().single();
-        if(ins.error)throw ins.error;
-        a=ins.data;
-      }
+      const h=await hierarchy();if(!h.i.length)throw new Error('Master NDPE belum memiliki indikator aktif.');
+      let aq=await supabase.from('sims_assessments').select('*').eq('company_id',companyId).eq('standard_id',standard.id).eq('assessment_year',Number(year)).maybeSingle();if(aq.error)throw aq.error;
+      let a=aq.data;
+      if(!a){const u=await supabase.auth.getUser();const q=await supabase.from('sims_assessments').insert({company_id:companyId,standard_id:standard.id,assessment_year:Number(year),created_by:u.data.user?.id||null}).select().single();if(q.error)throw q.error;a=q.data}
       setAssessment(a);
-
-      let existing=await supabase.from('sims_assessment_items').select('*').eq('assessment_id',a.id);
-      if(existing.error)throw existing.error;
-      const have=new Set((existing.data||[]).map(x=>x.indicator_id));
-      const missing=inds.filter(x=>!have.has(x.id));
-      if(missing.length){
-        const u=await supabase.auth.getUser();
-        const ins=await supabase.from('sims_assessment_items').insert(missing.map(x=>({assessment_id:a.id,indicator_id:x.id,updated_by:u.data.user?.id||null}))).select();
-        if(ins.error)throw ins.error;
-        existing={data:[...(existing.data||[]),...(ins.data||[])]};
-      }
-      setItems(existing.data||[]);
-
-      const ids=(existing.data||[]).map(x=>x.id);
-      const ev=ids.length?await supabase.from('sims_evidence').select('*').in('assessment_item_id',ids).order('uploaded_at',{ascending:false}):{data:[]};
-      if(ev.error)throw ev.error;
-      setEvidence(ev.data||[]);
-      const first=hierarchy.principles[0];
-      setOpenPrinciples(first?{[first.id]:true}:{});
-      setOpenItems({});
+      let iq=await supabase.from('sims_assessment_items').select('*').eq('assessment_id',a.id);if(iq.error)throw iq.error;
+      const have=new Set((iq.data||[]).map(x=>x.indicator_id)),missing=h.i.filter(x=>!have.has(x.id));
+      if(missing.length){const u=await supabase.auth.getUser();const q=await supabase.from('sims_assessment_items').insert(missing.map(x=>({assessment_id:a.id,indicator_id:x.id,updated_by:u.data.user?.id||null}))).select();if(q.error)throw q.error;iq={data:[...(iq.data||[]),...(q.data||[])]}}
+      setItems(iq.data||[]);
+      const ids=(iq.data||[]).map(x=>x.id),indIds=h.i.map(x=>x.id);
+      const [ev,mp]=await Promise.all([
+        ids.length?supabase.from('sims_evidence').select('*').in('assessment_item_id',ids).order('uploaded_at',{ascending:false}):Promise.resolve({data:[]}),
+        indIds.length?supabase.from('sims_report_standard_mappings').select('indicator_id,standard_code,standard_name,requirement_reference,sort_order').in('indicator_id',indIds).eq('active',true).order('sort_order'):Promise.resolve({data:[]})
+      ]);
+      if(ev.error||mp.error)throw(ev.error||mp.error);
+      setEvidence(ev.data||[]);setMappings(mp.data||[]);setOpenP(h.p[0]?{[h.p[0].id]:true}:{});
     }catch(e){setError(e.message||String(e))}finally{setLoading(false)}
   }
+  useEffect(()=>{if(companyId&&standard?.id)openAssessment();else{setAssessment(null);setPrinciples([]);setCriteria([]);setIndicators([]);setItems([]);setEvidence([]);setMappings([])}},[companyId,year,standard?.id]);
 
-  useEffect(()=>{
-    if(companyId&&standardId)openAssessment();
-    if(!companyId){
-      setAssessment(null);setItems([]);setEvidence([]);setPrinciples([]);setCriteria([]);setIndicators([]);setMasterMissing(false);setDirtyItems({});
-    }
-  },[companyId,standardId,year]);
-
+  const company=companies.find(x=>x.id===companyId);
   const itemMap=useMemo(()=>Object.fromEntries(items.map(x=>[x.indicator_id,x])),[items]);
+  const criterionMap=useMemo(()=>Object.fromEntries(criteria.map(x=>[x.id,x])),[criteria]);
+  const principleMap=useMemo(()=>Object.fromEntries(principles.map(x=>[x.id,x])),[principles]);
   const criteriaByP=useMemo(()=>{const m={};criteria.forEach(x=>(m[x.principle_id]??=[]).push(x));return m},[criteria]);
   const indsByC=useMemo(()=>{const m={};indicators.forEach(x=>(m[x.criterion_id]??=[]).push(x));return m},[indicators]);
-  const evidenceByItem=useMemo(()=>{const m={};evidence.forEach(x=>(m[x.assessment_item_id]??=[]).push(x));return m},[evidence]);
-  const company=companies.find(x=>x.id===companyId);
-  const standard=standards.find(x=>x.id===standardId);
+  const evByItem=useMemo(()=>{const m={};evidence.forEach(x=>(m[x.assessment_item_id]??=[]).push(x));return m},[evidence]);
 
   const counts=useMemo(()=>{
-    const total=items.length;
-    const assessed=items.filter(x=>x.self_status&&x.self_status!=='Not Started').length;
-    const verified=items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length;
-    const pending=items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status!=='Verified').length;
-    const gaps=items.filter(x=>x.self_status==='Not Fulfilled').length;
-    const na=items.filter(x=>x.self_status==='N/A').length;
-    return{
-      total,assessed,verified,pending,gaps,na,
-      assessmentProgress:total?Math.round(assessed/total*100):0,
-      compliance:total?Math.round(verified/total*100):0
-    };
-  },[items]);
+    const total=items.length,assessed=items.filter(x=>x.self_status&&x.self_status!=='Not Started').length;
+    return{total,assessed,fulfilled:items.filter(x=>x.self_status==='Fulfilled').length,verified:items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length,gaps:items.filter(x=>x.self_status==='Not Fulfilled').length,evidence:items.filter(x=>(evByItem[x.id]||[]).length).length,progress:total?Math.round(assessed/total*100):0}
+  },[items,evByItem]);
 
-  const criteriaMap=useMemo(()=>Object.fromEntries(criteria.map(x=>[x.id,x])),[criteria]);
-  const principleMap=useMemo(()=>Object.fromEntries(principles.map(x=>[x.id,x])),[principles]);
-
-  function indicatorMatches(ind){
-    const item=itemMap[ind.id];
-    if(!item)return false;
-    if(statusFilter!=='All'&&item.self_status!==statusFilter)return false;
-    if(verifyFilter!=='All'&&item.verifier_status!==verifyFilter)return false;
-    const term=searchText.trim().toLowerCase();
-    if(!term)return true;
-    const cr=criteriaMap[ind.criterion_id];
-    const pr=cr?principleMap[cr.principle_id]:null;
-    const text=[ind.code,ind.description,ind.object_evidence,cr?.code,cr?.title,pr?.code,pr?.title].filter(Boolean).join(' ').toLowerCase();
-    return text.includes(term);
+  function matches(ind){
+    const it=itemMap[ind.id];if(!it)return false;if(status!=='All'&&it.self_status!==status)return false;
+    const t=search.trim().toLowerCase();if(!t)return true;const c=criterionMap[ind.criterion_id],p=c?principleMap[c.principle_id]:null;
+    return[ind.code,ind.description,ind.object_evidence,c?.code,c?.title,p?.code,p?.title].filter(Boolean).join(' ').toLowerCase().includes(t);
   }
-
-  const visibleIndicatorCount=useMemo(()=>indicators.filter(ind=>indicatorMatches(ind)).length,[indicators,itemMap,statusFilter,verifyFilter,searchText,criteriaMap,principleMap]);
-  const hasActiveFilter=!!searchText.trim()||statusFilter!=='All'||verifyFilter!=='All';
-
-  useEffect(()=>{
-    if(!assessment||!hasActiveFilter)return;
-    const next={};
-    principles.forEach(pr=>{
-      const has=(criteriaByP[pr.id]||[]).some(cr=>(indsByC[cr.id]||[]).some(ind=>indicatorMatches(ind)));
-      if(has)next[pr.id]=true;
-    });
-    setOpenPrinciples(next);
-  },[searchText,statusFilter,verifyFilter]);
-
-  function patchItem(id,patch){
-    setItems(v=>v.map(x=>x.id===id?{...x,...patch}:x));
-    setDirtyItems(v=>({...v,[id]:true}));
-  }
-
-  function clearFilters(){setSearchText('');setStatusFilter('All');setVerifyFilter('All')}
-  function focusGaps(){setSearchText('');setVerifyFilter('All');setStatusFilter('Not Fulfilled')}
-  function focusReview(){setSearchText('');setStatusFilter('Fulfilled');setVerifyFilter('Pending')}
-  function expandAll(){setOpenPrinciples(Object.fromEntries(principles.map(x=>[x.id,true])))}
-  function collapseAll(){setOpenPrinciples({});setOpenItems({})}
+  const visible=useMemo(()=>indicators.filter(matches).length,[indicators,itemMap,status,search,criterionMap,principleMap]);
+  function patch(id,p){setItems(v=>v.map(x=>x.id===id?{...x,...p}:x));setDirty(v=>({...v,[id]:true}))}
 
   async function saveItem(indicatorId){
-    const item=itemMap[indicatorId];if(!item)return;
-    setSavingId(item.id);setError('');
-    try{
-      const u=await supabase.auth.getUser();
-      const payload={self_status:item.self_status,explanation:item.explanation||null,verifier_status:item.verifier_status||'Pending',verifier_notes:item.verifier_notes||null,updated_by:u.data.user?.id||null,updated_at:new Date().toISOString()};
-      if(item.verifier_status==='Verified'){payload.verified_by=u.data.user?.id||null;payload.verified_at=new Date().toISOString();}else{payload.verified_by=null;payload.verified_at=null;}
-      const up=await supabase.from('sims_assessment_items').update(payload).eq('id',item.id);if(up.error)throw up.error;
-      if(item.self_status==='Not Fulfilled'){
-        const ap=await supabase.from('sims_action_plans').upsert({assessment_item_id:item.id,status:'Open',created_by:u.data.user?.id||null,updated_at:new Date().toISOString()},{onConflict:'assessment_item_id'});if(ap.error)throw ap.error;
-      }
-      setDirtyItems(v=>{const n={...v};delete n[item.id];return n});
-      setNotice('Assessment berhasil disimpan.');
+    const it=itemMap[indicatorId];if(!it)return;setSavingId(it.id);setError('');
+    try{const u=await supabase.auth.getUser(),verified=it.verifier_status==='Verified';
+      const q=await supabase.from('sims_assessment_items').update({self_status:it.self_status||'Not Started',explanation:it.explanation||null,verifier_status:it.verifier_status||'Pending',verifier_notes:it.verifier_notes||null,updated_by:u.data.user?.id||null,updated_at:new Date().toISOString(),verified_by:verified?u.data.user?.id||null:null,verified_at:verified?new Date().toISOString():null}).eq('id',it.id);if(q.error)throw q.error;
+      if(it.self_status==='Not Fulfilled'){const ap=await supabase.from('sims_action_plans').upsert({assessment_item_id:it.id,status:'Open',created_by:u.data.user?.id||null,updated_at:new Date().toISOString()},{onConflict:'assessment_item_id'});if(ap.error)throw ap.error}
+      setDirty(v=>{const n={...v};delete n[it.id];return n});setNotice(`NDPE ${indicators.find(x=>x.id===indicatorId)?.code||''} berhasil disimpan.`);
     }catch(e){setError(e.message||String(e))}finally{setSavingId('')}
   }
-
-  async function uploadEvidence(item,file){
-    if(!file||!assessment)return;
-    setSavingId(item.id);setError('');
-    try{
-      const u=await supabase.auth.getUser();
-      const path=`${assessment.id}/${item.id}/${Date.now()}-${safeName(file.name)}`;
+  async function uploadEvidence(it,file){
+    if(!file||!assessment)return;setSavingId(it.id);setError('');
+    try{const u=await supabase.auth.getUser(),path=`${assessment.id}/${it.id}/${Date.now()}-${safe(file.name)}`;
       const up=await supabase.storage.from('sims-evidence').upload(path,file,{upsert:false});if(up.error)throw up.error;
-      const ins=await supabase.from('sims_evidence').insert({assessment_item_id:item.id,file_name:file.name,file_path:path,file_type:file.type||null,file_size:file.size,uploaded_by:u.data.user?.id||null}).select().single();if(ins.error)throw ins.error;
-      setEvidence(v=>[ins.data,...v]);setNotice('Evidence berhasil di-upload.');
+      const q=await supabase.from('sims_evidence').insert({assessment_item_id:it.id,file_name:file.name,file_path:path,file_type:file.type||null,file_size:file.size,uploaded_by:u.data.user?.id||null}).select().single();if(q.error)throw q.error;
+      setEvidence(v=>[q.data,...v]);setNotice('Evidence berhasil di-upload.');
     }catch(e){setError(e.message||String(e))}finally{setSavingId('')}
   }
+  async function openEvidence(ev){const q=await supabase.storage.from('sims-evidence').createSignedUrl(ev.file_path,120);if(q.error)setError(q.error.message);else window.open(q.data.signedUrl,'_blank','noopener,noreferrer')}
 
-  async function openEvidence(ev){
-    const s=await supabase.storage.from('sims-evidence').createSignedUrl(ev.file_path,120);
-    if(s.error)setError(s.error.message);else window.open(s.data.signedUrl,'_blank','noopener,noreferrer');
+  const reportRows=useMemo(()=>{
+    if(!showReport)return[];const mm=new Map();
+    if(reportType!=='NDPE')mappings.filter(x=>x.standard_code===reportType).forEach(x=>mm.set(x.indicator_id,x));
+    return indicators.filter(ind=>reportType==='NDPE'||mm.has(ind.id)).map((ind,n)=>{
+      const it=itemMap[ind.id],c=criterionMap[ind.criterion_id],p=c?principleMap[c.principle_id]:null,ev=it?evByItem[it.id]||[]:[];
+      return{no:n+1,id:ind.id,ref:reportType==='NDPE'?ind.code:mm.get(ind.id)?.requirement_reference||'',code:ind.code,requirement:ind.description,principle:p?`${p.code} - ${p.title}`:'',criterion:c?`${c.code} - ${c.title}`:'',status:it?.self_status||'Not Started',verify:it?.verifier_status||'Pending',evidence:ev.length,explanation:it?.explanation||''}
+    })
+  },[showReport,reportType,mappings,indicators,itemMap,criterionMap,principleMap,evByItem]);
+  const rs=useMemo(()=>{const total=reportRows.length,fulfilled=reportRows.filter(x=>x.status==='Fulfilled').length;return{total,fulfilled,verified:reportRows.filter(x=>x.status==='Fulfilled'&&x.verify==='Verified').length,gaps:reportRows.filter(x=>x.status==='Not Fulfilled').length,evidence:reportRows.filter(x=>x.evidence>0).length,coverage:total?Math.round(fulfilled/total*100):0}},[reportRows]);
+  const mapped=reportType==='NDPE'||mappings.some(x=>x.standard_code===reportType);
+  const reportLabel=REPORTS.find(x=>x[0]===reportType)?.[1]||reportType;
+  const filename=ext=>safe(`${company?.company_code||'PT'}_${reportType}_${year}_NDPE_Crosswalk.${ext}`);
+  function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
+  function exportCsv(){if(!reportRows.length)return;const h=['No','Standard Reference','NDPE Code','NDPE Requirement','Principle','Criterion','Status','Verifier','Evidence Count','Explanation'];const rows=[h.map(csv).join(','),...reportRows.map(r=>[r.no,r.ref,r.code,r.requirement,r.principle,r.criterion,r.status,r.verify,r.evidence,r.explanation].map(csv).join(','))];download(new Blob(['\uFEFF'+rows.join('\n')],{type:'text/csv;charset=utf-8'}),filename('csv'))}
+  async function exportPdf(){if(!reportRows.length)return;const{jsPDF}=await import('jspdf'),doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'}),pw=doc.internal.pageSize.getWidth(),ph=doc.internal.pageSize.getHeight();let y=14;
+    const head=()=>{doc.setFontSize(14);doc.text(`${reportLabel} Report - ${company?.company_code||''}`,12,y);y+=6;doc.setFontSize(8);doc.text(`Year ${year} | Source: NDPE Policy KPN IMIS`,12,y);y+=7};head();doc.setFontSize(8);
+    reportRows.forEach(r=>{const lines=doc.splitTextToSize(`${r.no}. [${r.ref}] NDPE ${r.code} - ${r.requirement} | ${r.status} | ${r.verify} | Evidence ${r.evidence}`,pw-24),h=lines.length*4+2;if(y+h>ph-10){doc.addPage();y=14;head()}doc.text(lines,12,y);y+=h});doc.save(filename('pdf'))
+  }
+  async function exportDocx(){if(!reportRows.length)return;const{Document,Packer,Paragraph,Table,TableRow,TableCell,TextRun,WidthType}=await import('docx');
+    const row=vals=>new TableRow({children:vals.map(v=>new TableCell({children:[new Paragraph(String(v??''))]}))});
+    const doc=new Document({sections:[{children:[new Paragraph({children:[new TextRun({text:`${reportLabel} Report - ${company?.company_code||''} - ${year}`,bold:true,size:28})]}),new Paragraph('Source assessment: NDPE Policy KPN IMIS. Crosswalk is not a certification conclusion.'),new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[row(['No','Standard Ref','NDPE','Requirement','Status','Verifier','Evidence']),...reportRows.map(r=>row([r.no,r.ref,r.code,r.requirement,r.status,r.verify,r.evidence]))]})]}]});
+    download(await Packer.toBlob(doc),filename('docx'))
   }
 
-  function principleProgress(pr){
-    const ids=(criteriaByP[pr.id]||[]).map(x=>x.id);
-    const pItems=ids.flatMap(id=>indsByC[id]||[]).map(ind=>itemMap[ind.id]).filter(Boolean);
-    const verified=pItems.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length;
-    return pItems.length?Math.round(verified/pItems.length*100):0;
-  }
-
-  return <div className="page-wrap">
+  return <div className="ndpe-wrap">
     <style>{`
-      .sims-company-card{background:#fff;border:1px solid #dce8e0;border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:0 4px 16px rgba(24,64,43,.04)}
-      .sims-company-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;padding-bottom:16px;border-bottom:1px solid #edf2ef}
-      .sims-company-head>div:first-child>span{font-size:10px;letter-spacing:.1em;color:#718379;font-weight:800}.sims-company-head h2{margin:5px 0 4px;color:#0c3f2b;font-size:20px}.sims-company-head p{margin:0;color:#7b8b82;font-size:12px}
-      .sims-year-badge{min-width:64px;height:42px;border-radius:12px;background:#eef7f1;color:#17583a;display:grid;place-items:center;font-weight:800;border:1px solid #d3e8da}
-      .sims-company-info{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.sims-company-info>div{background:#f8fbf9;border:1px solid #e5eee8;border-radius:12px;padding:12px 14px}.sims-company-info span{display:block;font-size:9px;letter-spacing:.07em;color:#7a8a81;font-weight:800;text-transform:uppercase;margin-bottom:5px}.sims-company-info strong{font-size:13px;color:#153f2d}.sims-company-info small{display:block;margin-top:5px;color:#78887f;line-height:1.35}.sims-sites{grid-column:1/-1}
-      .sims-loading{display:flex;gap:12px;align-items:center;background:#fff;border:1px solid #dfe9e3;border-radius:14px;padding:18px;margin-bottom:18px}.sims-loading-dot{width:12px;height:12px;border-radius:50%;background:#1d6c49;box-shadow:0 0 0 6px #e8f4ec}.sims-loading strong,.sims-loading span{display:block}.sims-loading span{font-size:11px;color:#7a8a81;margin-top:3px}
-      .sims-master-missing{display:flex;gap:14px;align-items:flex-start;background:#fff8e8;border:1px solid #eed89e;border-radius:14px;padding:17px 18px;margin-bottom:18px;color:#6d5312}.sims-master-icon{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#ffe5a7;font-weight:900}.sims-master-missing strong{display:block;color:#65480c}.sims-master-missing p{margin:5px 0 0;font-size:12px;line-height:1.5}
-      .sims-assessment-hero{display:grid;grid-template-columns:1.05fr 1.55fr auto;gap:18px;align-items:center;background:linear-gradient(135deg,#0d5137,#0a3e2b);color:white;border-radius:18px;padding:22px;margin-bottom:16px;box-shadow:0 12px 28px rgba(9,62,42,.13)}
-      .sims-score>span{font-size:10px;letter-spacing:.1em;opacity:.72}.sims-score>strong{display:block;font-size:50px;line-height:1;margin:7px 0 10px}.sims-score small{opacity:.72;font-size:10px}.sims-hero-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.18);overflow:hidden;margin-bottom:8px}.sims-hero-progress i{display:block;height:100%;background:#d7f36a;border-radius:999px}
-      .sims-hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sims-hero-stats>div{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px}.sims-hero-stats span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;opacity:.7}.sims-hero-stats strong{font-size:22px}.sims-hero-actions{display:flex;flex-direction:column;gap:8px}.sims-hero-actions .secondary-btn{background:rgba(255,255,255,.12);color:white;border:1px solid rgba(255,255,255,.18);text-align:center}.sims-hero-actions .primary-btn{background:#d7f36a;color:#173426;text-align:center}
-      .sims-work-progress{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid #dce8e0;border-radius:14px;padding:13px 15px;margin-bottom:16px}.sims-work-progress>span{font-size:11px;font-weight:800;color:#315946}.sims-work-progress-track{height:7px;border-radius:999px;background:#edf3ef;overflow:hidden}.sims-work-progress-track i{display:block;height:100%;background:#44a06d;border-radius:999px}.sims-work-progress strong{font-size:12px;color:#174a32}
-      .sims-toolbar{position:sticky;top:10px;z-index:5;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border:1px solid #dce8e0;border-radius:15px;padding:12px;display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(150px,.65fr) minmax(150px,.65fr) auto;gap:10px;align-items:end;margin-bottom:18px;box-shadow:0 8px 22px rgba(25,65,44,.07)}
-      .sims-filter-field span{display:block;font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#718379;margin-bottom:5px}.sims-filter-field input,.sims-filter-field select{width:100%;height:38px;border:1px solid #d7e3dc;border-radius:10px;padding:0 11px;background:#fff;color:#244735;outline:none}.sims-filter-field input:focus,.sims-filter-field select:focus{border-color:#5c9d78;box-shadow:0 0 0 3px #edf7f1}
-      .sims-toolbar-actions{display:flex;gap:6px;flex-wrap:wrap}.sims-tool-btn{height:38px;border:1px solid #d7e3dc;border-radius:10px;background:#f8fbf9;color:#315946;padding:0 11px;font-size:11px;font-weight:700;cursor:pointer}.sims-tool-btn:hover{background:#edf6f0}.sims-tool-btn.active{background:#e7f5ec;border-color:#9fc8ae;color:#125132}.sims-filter-summary{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:2px;font-size:11px;color:#718379}.sims-filter-summary strong{color:#254f39}.sims-filter-summary button{border:0;background:none;color:#1b6c48;font-size:11px;font-weight:800;cursor:pointer}
-      .sims-section-intro{display:flex;gap:12px;align-items:center;margin:4px 0 14px}.sims-section-no{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:#173f2d;color:#fff;font-weight:800}.sims-section-intro h2{margin:0 0 3px;font-size:18px;color:#143e2c}.sims-section-intro p{margin:0;color:#7b8b82;font-size:12px}
-      .sims-evidence-req{background:#fff8e9;border:1px solid #eee0b7;border-radius:10px;padding:12px 14px;margin-bottom:14px}.sims-evidence-req strong{font-size:11px;color:#6e5718}.sims-evidence-req p{margin:5px 0 0;font-size:12px;line-height:1.5;color:#655d45}.sims-no-evidence{font-size:11px;color:#87958d}
-      .sims-row-meta{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.sims-mini-badge{font-size:9px;font-weight:800;border-radius:999px;padding:4px 7px;background:#edf3ef;color:#587064;white-space:nowrap}.sims-mini-badge.evidence{background:#eef4ff;color:#355c8d}.sims-mini-badge.unsaved{background:#fff3d7;color:#805b08}.sims-empty-filter{background:#fff;border:1px dashed #cfded5;border-radius:14px;padding:28px;text-align:center;color:#718379}.sims-empty-filter strong{display:block;color:#244735;margin-bottom:5px}
-      @media(max-width:1100px){.sims-toolbar{grid-template-columns:1fr 1fr}.sims-filter-summary{grid-column:1/-1}.sims-toolbar-actions{grid-column:1/-1}.sims-company-info{grid-template-columns:1fr 1fr}.sims-assessment-hero{grid-template-columns:1fr}.sims-hero-actions{flex-direction:row}.sims-hero-stats{grid-template-columns:repeat(2,1fr)}}
-      @media(max-width:650px){.sims-company-head{flex-direction:column}.sims-company-info{grid-template-columns:1fr}.sims-sites{grid-column:auto}.sims-hero-actions{flex-direction:column}.sims-toolbar{position:static;grid-template-columns:1fr}.sims-toolbar-actions{grid-column:auto}.sims-filter-summary{grid-column:auto;align-items:flex-start;flex-direction:column}.sims-work-progress{grid-template-columns:1fr}.sims-row-meta{justify-content:flex-start}}
+      .ndpe-wrap{padding-bottom:36px;color:#173f2d}.ndpe-titlebar{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:16px}.ndpe-titlebar h1{margin:4px 0 6px;font-size:28px}.ndpe-titlebar p{margin:0;color:#718379;max-width:760px}.ndpe-tag{padding:8px 11px;border-radius:999px;background:#eaf6ee;border:1px solid #cce5d4;color:#17583a;font-size:11px;font-weight:800;white-space:nowrap}
+      .ndpe-card{background:#fff;border:1px solid #dce8e0;border-radius:15px;box-shadow:0 5px 18px rgba(24,64,43,.05)}.ndpe-context{display:grid;grid-template-columns:1.4fr .55fr 1fr;gap:12px;padding:15px;margin-bottom:15px;align-items:end}.ndpe-field span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.07em;font-weight:900;color:#718379;margin-bottom:5px}.ndpe-field select,.ndpe-field input,.ndpe-field textarea{width:100%;border:1px solid #d7e3dc;border-radius:9px;background:#fff;color:#244735;outline:none}.ndpe-field select,.ndpe-field input{height:39px;padding:0 10px}.ndpe-field textarea{padding:9px;resize:vertical}.ndpe-master{padding:9px 11px;background:#f5f9f6;border:1px solid #dcebe2;border-radius:10px}.ndpe-master small{display:block;color:#73867a}.ndpe-master strong{font-size:12px}
+      .ndpe-company{padding:16px;margin-bottom:14px}.ndpe-company h2{margin:3px 0}.ndpe-info{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.ndpe-info div{background:#f8fbf9;border:1px solid #e6eee9;border-radius:10px;padding:9px}.ndpe-info small{display:block;color:#77897e}.ndpe-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}.ndpe-kpi{background:#fff;border:1px solid #dce8e0;border-radius:12px;padding:11px}.ndpe-kpi:first-child{background:#0c4d35;color:#fff}.ndpe-kpi small{display:block;opacity:.7}.ndpe-kpi strong{display:block;font-size:23px;margin-top:3px}
+      .ndpe-toolbar{padding:11px;display:grid;grid-template-columns:1fr .35fr auto;gap:9px;align-items:end;margin-bottom:14px;position:sticky;top:8px;z-index:4}.ndpe-actions{display:flex;gap:6px;flex-wrap:wrap}.ndpe-btn{height:38px;border:1px solid #d5e2da;border-radius:9px;background:#f8fbf9;color:#2a573f;padding:0 11px;font-weight:800;font-size:11px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}.ndpe-btn.primary{background:#176443;color:#fff;border-color:#176443}.ndpe-summary{grid-column:1/-1;font-size:11px;color:#718379}
+      .ndpe-principle{margin-bottom:10px;overflow:hidden}.ndpe-pr-head{width:100%;border:0;background:#f4f9f6;padding:13px 15px;text-align:left;display:flex;justify-content:space-between;cursor:pointer}.ndpe-pr-head span{font-size:11px;color:#75867c}.ndpe-pr-body{padding:11px}.ndpe-criterion h3{font-size:12px;margin:9px 0;color:#315b45}.ndpe-item{border:1px solid #e2ebe5;border-radius:10px;margin-bottom:7px;overflow:hidden}.ndpe-item-head{width:100%;border:0;background:#fff;padding:10px 12px;display:grid;grid-template-columns:70px 1fr auto;gap:10px;text-align:left;align-items:center;cursor:pointer}.ndpe-code{font-weight:900;color:#15583b}.ndpe-desc{font-size:12px;line-height:1.4}.ndpe-badges{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}.ndpe-pill{font-size:9px;font-weight:900;padding:4px 7px;border-radius:999px;background:#eef3f0;color:#61736a}.ndpe-pill.good{background:#e7f6ec;color:#1f6b43}.ndpe-pill.bad{background:#fdeceb;color:#9a362f}.ndpe-pill.warn{background:#fff4d7;color:#7b5a0b}.ndpe-pill.blue{background:#edf3ff;color:#315e91}.ndpe-editor{border-top:1px solid #e6eee9;background:#fbfdfb;padding:12px}.ndpe-req{padding:10px;background:#eff7f2;border-radius:9px;margin-bottom:9px}.ndpe-req.evidence{background:#fff8e9}.ndpe-req strong{font-size:9px}.ndpe-req p{white-space:pre-line;font-size:12px;line-height:1.45;margin:4px 0 0}.ndpe-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.ndpe-full{grid-column:1/-1}.ndpe-files{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:9px}.ndpe-file{border:1px solid #d6e4db;background:#fff;border-radius:999px;padding:5px 8px;font-size:10px;cursor:pointer}.ndpe-upload{padding:6px 9px;border-radius:8px;background:#edf7f1;color:#17583a;font-size:10px;font-weight:900;cursor:pointer}
+      .ndpe-report{margin-top:22px;padding:18px}.ndpe-report h2{margin:4px 0 5px}.ndpe-report-control{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end;margin:13px 0}.ndpe-note{padding:10px;background:#f5f9f6;border:1px solid #dce7df;border-radius:9px;color:#63766a;font-size:11px}.ndpe-rkpis{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin:12px 0}.ndpe-rkpis div{border:1px solid #dfe9e3;border-radius:9px;padding:9px}.ndpe-rkpis small{display:block;color:#788a80}.ndpe-rkpis strong{font-size:20px}.ndpe-tablewrap{overflow:auto;border:1px solid #dfe8e2;border-radius:9px;margin-top:10px}.ndpe-table{border-collapse:collapse;width:100%;min-width:950px;font-size:10px}.ndpe-table th{background:#eef6f1;text-align:left;padding:8px}.ndpe-table td{padding:8px;border-top:1px solid #edf2ef;vertical-align:top;white-space:pre-line}.ndpe-table td.req{min-width:300px}.ndpe-alert{padding:10px 12px;border-radius:10px;margin-bottom:12px;font-size:12px}.ndpe-alert.error{background:#fff0ef;border:1px solid #efc7c2;color:#8c3028}.ndpe-alert.ok{background:#edf8f1;border:1px solid #cee7d6;color:#245c3d}.ndpe-alert.warn{background:#fff8e8;border:1px solid #ecd99f;color:#725711}
+      @media(max-width:950px){.ndpe-context{grid-template-columns:1fr 1fr}.ndpe-master{grid-column:1/-1}.ndpe-info,.ndpe-kpis,.ndpe-rkpis{grid-template-columns:repeat(2,1fr)}.ndpe-toolbar{grid-template-columns:1fr 1fr}.ndpe-actions,.ndpe-summary{grid-column:1/-1}}@media(max-width:600px){.ndpe-titlebar{flex-direction:column}.ndpe-context,.ndpe-toolbar,.ndpe-report-control,.ndpe-grid{grid-template-columns:1fr}.ndpe-master,.ndpe-actions,.ndpe-summary,.ndpe-full{grid-column:auto}.ndpe-info,.ndpe-kpis,.ndpe-rkpis{grid-template-columns:1fr}.ndpe-item-head{grid-template-columns:60px 1fr}.ndpe-badges{grid-column:1/-1;justify-content:flex-start}.ndpe-toolbar{position:static}}
     `}</style>
-
-    <div className="page-heading"><div><div className={styles.eyebrow}>SIMS · SUSTAINABILITY MANAGEMENT</div><h1>Sustainability Assessment</h1><p>Pilih PT, standard dan tahun. Assessment langsung dimuat dari master SIMS tanpa upload Excel.</p></div></div>
-
-    <SimsContextBar {...{companies,standards,companyId,setCompanyId,standardId,setStandardId,year,setYear,onOpen:openAssessment,loading}} hideOpenButton helperText="Pilih PT, standard dan tahun. Form assessment akan tampil otomatis."/>
-
-    {error?<div className="sync-error"><strong>SIMS error</strong><span>{error}</span></div>:null}
-    {notice?<div className={styles.notice}>{notice}</div>:null}
-
-    {companyId?<section className="sims-company-card">
-      <div className="sims-company-head"><div><span>INFORMASI PERUSAHAAN</span><h2>{company?.company_code} — {company?.company_name}</h2><p>Data diambil dari Master Company & Site.</p></div><div className="sims-year-badge">{year}</div></div>
-      <div className="sims-company-info">
-        <div><span>Company Code</span><strong>{company?.company_code||'-'}</strong></div>
-        <div><span>Region</span><strong>{company?.region||'-'}</strong></div>
-        <div><span>Province</span><strong>{company?.province||'-'}</strong></div>
-        <div><span>Standard</span><strong>{standard?.name||'-'}</strong></div>
-        <div className="sims-sites"><span>Active Site / Unit</span><strong>{sites.length}</strong><small>{sites.length?sites.map(s=>s.site_name).join(' · '):'Belum ada site aktif pada master.'}</small></div>
-      </div>
-    </section>:null}
-
-    {loading?<section className="sims-loading"><div className="sims-loading-dot"></div><div><strong>Loading assessment…</strong><span>Menyiapkan indikator untuk PT yang dipilih.</span></div></section>:null}
-
-    {!loading&&masterMissing?<section className="sims-master-missing"><div className="sims-master-icon">!</div><div><strong>Master indikator belum tersedia di database.</strong><p>Standard yang dipilih belum memiliki Principle, Criterion dan Indicator aktif. Master cukup dimuat satu kali oleh administrator di Supabase.</p></div></section>:null}
-
+    <div className="ndpe-titlebar"><div><div className={styles.eyebrow}>SIMS · SUSTAINABILITY MANAGEMENT</div><h1>NDPE Policy & Report Generator</h1><p>Assessment diisi satu kali berdasarkan NDPE Policy, lalu digenerate menjadi report ISPO, RSPO, ISCC dan standard lain berdasarkan crosswalk.</p></div><div className="ndpe-tag">Single Source · Multi Standard</div></div>
+    <section className="ndpe-card ndpe-context">
+      <label className="ndpe-field"><span>Company / PT</span><select value={companyId} onChange={e=>setCompanyId(e.target.value)}><option value="">Pilih Company / PT</option>{companies.map(x=><option key={x.id} value={x.id}>{x.company_code} — {x.company_name}</option>)}</select></label>
+      <label className="ndpe-field"><span>Assessment Year</span><input type="number" min="2020" max="2100" value={year} onChange={e=>setYear(Number(e.target.value))}/></label>
+      <div className="ndpe-master"><small>Assessment Master</small><strong>{standard?.name||'Loading NDPE master…'}</strong></div>
+    </section>
+    {error?<div className="ndpe-alert error">{error}</div>:null}{notice?<div className="ndpe-alert ok">{notice}</div>:null}
+    {companyId?<section className="ndpe-card ndpe-company"><small>INFORMASI PERUSAHAAN</small><h2>{company?.company_code} — {company?.company_name}</h2><div className="ndpe-info"><div><small>Region</small><strong>{company?.region||'-'}</strong></div><div><small>Province</small><strong>{company?.province||'-'}</strong></div><div><small>NDPE Indicators</small><strong>{indicators.length||177}</strong></div><div><small>Active Sites</small><strong>{sites.length}</strong></div></div></section>:null}
+    {loading?<div className="ndpe-alert warn">Menyiapkan assessment NDPE dan crosswalk report…</div>:null}
     {!loading&&assessment?<>
-      <section className="sims-assessment-hero">
-        <div className="sims-score"><span>OVERALL COMPLIANCE</span><strong>{counts.compliance}%</strong><div className="sims-hero-progress"><i style={{width:`${counts.compliance}%`}}/></div><small>Fulfilled + Verified / total active indicator</small></div>
-        <div className="sims-hero-stats"><div><span>Total Indicator</span><strong>{counts.total}</strong></div><div><span>Assessed</span><strong>{counts.assessed}</strong></div><div><span>Verified</span><strong>{counts.verified}</strong></div><div><span>Gap</span><strong>{counts.gaps}</strong></div></div>
-        <div className="sims-hero-actions"><Link href="/sims/action-plan" className="secondary-btn">Open Action Plan</Link><Link href="/sims/compliance" className="primary-btn">View Compliance</Link></div>
+      <section className="ndpe-kpis"><div className="ndpe-kpi"><small>Progress</small><strong>{counts.progress}%</strong></div><div className="ndpe-kpi"><small>Total NDPE</small><strong>{counts.total}</strong></div><div className="ndpe-kpi"><small>Fulfilled</small><strong>{counts.fulfilled}</strong></div><div className="ndpe-kpi"><small>Verified</small><strong>{counts.verified}</strong></div><div className="ndpe-kpi"><small>Gap</small><strong>{counts.gaps}</strong></div><div className="ndpe-kpi"><small>Evidence Ready</small><strong>{counts.evidence}</strong></div></section>
+      <section className="ndpe-card ndpe-toolbar">
+        <label className="ndpe-field"><span>Search NDPE</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari kode, policy, evidence…"/></label>
+        <label className="ndpe-field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value)}><option>All</option>{SELF.map(x=><option key={x}>{x}</option>)}</select></label>
+        <div className="ndpe-actions"><button className="ndpe-btn" onClick={()=>setOpenP(Object.fromEntries(principles.map(x=>[x.id,true])))}>Expand All</button><button className="ndpe-btn" onClick={()=>setOpenP({})}>Collapse</button><Link className="ndpe-btn" href="/sims/action-plan">Action Plan</Link></div>
+        <div className="ndpe-summary">Menampilkan <strong>{visible}</strong> dari <strong>{counts.total}</strong> indikator NDPE.</div>
       </section>
+      <section>{principles.map(p=>{const pcs=criteriaByP[p.id]||[],has=pcs.some(c=>(indsByC[c.id]||[]).some(matches));if(!has)return null;const opened=!!openP[p.id];return <article className="ndpe-card ndpe-principle" key={p.id}>
+        <button className="ndpe-pr-head" onClick={()=>setOpenP(v=>({...v,[p.id]:!v[p.id]}))}><div><strong>{p.code}. {p.title}</strong><br/><span>{pcs.reduce((n,c)=>n+(indsByC[c.id]||[]).length,0)} indicator</span></div><strong>{opened?'−':'+'}</strong></button>
+        {opened?<div className="ndpe-pr-body">{pcs.map(c=>{const inds=(indsByC[c.id]||[]).filter(matches);if(!inds.length)return null;return <div className="ndpe-criterion" key={c.id}><h3>{c.code} · {c.title}</h3>{inds.map(ind=>{const it=itemMap[ind.id];if(!it)return null;const files=evByItem[it.id]||[],openedI=!!openI[it.id];return <div className="ndpe-item" key={ind.id}>
+          <button className="ndpe-item-head" onClick={()=>setOpenI(v=>({...v,[it.id]:!v[it.id]}))}><span className="ndpe-code">{ind.code}</span><span className="ndpe-desc">{ind.description}</span><span className="ndpe-badges"><span className={`ndpe-pill ${it.self_status==='Fulfilled'?'good':it.self_status==='Not Fulfilled'?'bad':'warn'}`}>{it.self_status}</span><span className={`ndpe-pill ${it.verifier_status==='Verified'?'good':it.verifier_status==='Need Revision'?'bad':'warn'}`}>{it.verifier_status}</span><span className="ndpe-pill blue">{files.length} evidence</span>{dirty[it.id]?<span className="ndpe-pill warn">Unsaved</span>:null}</span></button>
+          {openedI?<div className="ndpe-editor"><div className="ndpe-req"><strong>NDPE REQUIREMENT</strong><p>{ind.description}</p></div>{ind.object_evidence?<div className="ndpe-req evidence"><strong>OBJECT EVIDENCE</strong><p>{ind.object_evidence}</p></div>:null}
+            <div className="ndpe-grid"><label className="ndpe-field"><span>Assessment Status</span><select value={it.self_status||'Not Started'} onChange={e=>patch(it.id,{self_status:e.target.value})}>{SELF.map(x=><option key={x}>{x}</option>)}</select></label><label className="ndpe-field"><span>Verifier Status</span><select value={it.verifier_status||'Pending'} onChange={e=>patch(it.id,{verifier_status:e.target.value})}>{VERIFY.map(x=><option key={x}>{x}</option>)}</select></label><label className="ndpe-field ndpe-full"><span>Implementation / Explanation</span><textarea rows="3" value={it.explanation||''} onChange={e=>patch(it.id,{explanation:e.target.value})}/></label><label className="ndpe-field ndpe-full"><span>Verifier Notes</span><textarea rows="2" value={it.verifier_notes||''} onChange={e=>patch(it.id,{verifier_notes:e.target.value})}/></label></div>
+            <div className="ndpe-files">{files.map(f=><button className="ndpe-file" key={f.id} onClick={()=>openEvidence(f)}>{f.file_name}</button>)}{!files.length?<span>Belum ada evidence.</span>:null}<label className="ndpe-upload">+ Upload Evidence<input hidden type="file" onChange={e=>uploadEvidence(it,e.target.files?.[0])}/></label></div>
+            <div className="ndpe-actions" style={{marginTop:10}}><button className="ndpe-btn primary" disabled={savingId===it.id} onClick={()=>saveItem(ind.id)}>{savingId===it.id?'Saving…':'Save NDPE'}</button>{it.self_status==='Not Fulfilled'?<span className="ndpe-pill bad">Auto → Sustainability Action Plan</span>:null}</div>
+          </div>:null}</div>})}</div>})}</div>:null}</article>})}</section>
 
-      <section className="sims-work-progress"><span>Assessment Progress</span><div className="sims-work-progress-track"><i style={{width:`${counts.assessmentProgress}%`}}/></div><strong>{counts.assessed}/{counts.total} · {counts.assessmentProgress}%</strong></section>
-
-      <section className="sims-toolbar">
-        <label className="sims-filter-field"><span>Search Indicator</span><input value={searchText} onChange={e=>setSearchText(e.target.value)} placeholder="Cari kode, indikator, kriteria…"/></label>
-        <label className="sims-filter-field"><span>Assessment Status</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option>{SELF_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
-        <label className="sims-filter-field"><span>Verifier Status</span><select value={verifyFilter} onChange={e=>setVerifyFilter(e.target.value)}><option>All</option>{VERIFY_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
-        <div className="sims-toolbar-actions"><button className={`sims-tool-btn ${statusFilter==='Not Fulfilled'?'active':''}`} onClick={focusGaps}>Gap ({counts.gaps})</button><button className={`sims-tool-btn ${statusFilter==='Fulfilled'&&verifyFilter==='Pending'?'active':''}`} onClick={focusReview}>Need Review ({counts.pending})</button><button className="sims-tool-btn" onClick={expandAll}>Expand</button><button className="sims-tool-btn" onClick={collapseAll}>Collapse</button></div>
-        <div className="sims-filter-summary"><span>Menampilkan <strong>{visibleIndicatorCount}</strong> dari <strong>{counts.total}</strong> indikator.</span>{hasActiveFilter?<button onClick={clearFilters}>Clear filter</button>:<span>Gunakan filter untuk fokus pada gap atau indikator yang belum diverifikasi.</span>}</div>
+      <section className="ndpe-card ndpe-report" id="report-generator"><div className={styles.eyebrow}>GENERATE REPORT</div><h2>Cross-Standard Report</h2><p>Report mengambil assessment NDPE yang sama dan menampilkan indikator yang memiliki mapping ke standard pilihan.</p>
+        <div className="ndpe-report-control"><label className="ndpe-field"><span>Report Type</span><select value={reportType} onChange={e=>{setReportType(e.target.value);setShowReport(false)}}>{REPORTS.map(r=><option key={r[0]} value={r[0]}>{r[1]}</option>)}</select></label><button className="ndpe-btn primary" onClick={()=>setShowReport(true)}>Generate Report</button></div>
+        <div className="ndpe-note">Source mapping: <strong>SIMS - KPN - NDPE - ISPO Permentan 33 2025.xlsx</strong> · sheet NDPE 2022. Crosswalk adalah referensi keterkaitan requirement, bukan keputusan audit/sertifikasi.</div>
+        {showReport&&!mapped?<div className="ndpe-alert warn" style={{marginTop:10}}>Mapping {reportLabel} belum tersedia pada source IMIS yang digunakan. Pilihan report sudah disiapkan; crosswalk resmi perlu dimasukkan sebelum report dapat dihitung.</div>:null}
+        {showReport&&mapped?<div><div className="ndpe-rkpis"><div><small>Mapped NDPE</small><strong>{rs.total}</strong></div><div><small>Fulfilled</small><strong>{rs.fulfilled}</strong></div><div><small>Verified</small><strong>{rs.verified}</strong></div><div><small>Gap</small><strong>{rs.gaps}</strong></div><div><small>Evidence Ready</small><strong>{rs.evidence}</strong></div><div><small>NDPE Coverage</small><strong>{rs.coverage}%</strong></div></div>
+          <div className="ndpe-actions"><button className="ndpe-btn" onClick={exportCsv}>Excel / CSV</button><button className="ndpe-btn" onClick={exportPdf}>PDF</button><button className="ndpe-btn" onClick={exportDocx}>Word</button><Link className="ndpe-btn" href="/sims/compliance">Open Compliance</Link></div>
+          {reportRows.length?<div className="ndpe-tablewrap"><table className="ndpe-table"><thead><tr><th>No</th><th>{reportLabel} Requirement</th><th>NDPE</th><th>NDPE Requirement</th><th>Status</th><th>Verifier</th><th>Evidence</th></tr></thead><tbody>{reportRows.map(r=><tr key={`${reportType}-${r.id}`}><td>{r.no}</td><td>{r.ref}</td><td><strong>{r.code}</strong></td><td className="req">{r.requirement}</td><td>{r.status}</td><td>{r.verify}</td><td>{r.evidence}</td></tr>)}</tbody></table></div>:<div className="ndpe-alert warn" style={{marginTop:10}}>Tidak ada baris report untuk mapping ini.</div>}</div>:null}
       </section>
-
-      <section className="sims-section-intro"><div className="sims-section-no">1</div><div><h2>Sustainability Assessment</h2><p>Isi status, penjelasan, evidence, dan verification untuk setiap indikator.</p></div></section>
-
-      {visibleIndicatorCount===0?<section className="sims-empty-filter"><strong>Tidak ada indikator yang sesuai filter.</strong><span>Ubah pencarian atau klik Clear filter.</span></section>:<section className={styles.tree}>
-        {principles.map(pr=>{
-          const pCriteria=criteriaByP[pr.id]||[];
-          const visibleCriteria=pCriteria.map(cr=>({...cr,_visible:(indsByC[cr.id]||[]).filter(ind=>indicatorMatches(ind))})).filter(cr=>cr._visible.length);
-          if(!visibleCriteria.length)return null;
-          const pPct=principleProgress(pr),isOpen=!!openPrinciples[pr.id];
-          const pVisibleCount=visibleCriteria.reduce((n,cr)=>n+cr._visible.length,0);
-          return <article className={styles.principle} key={pr.id}>
-            <button className={styles.principleHead} onClick={()=>setOpenPrinciples(v=>({...v,[pr.id]:!v[pr.id]}))}>
-              <div><span className={styles.code}>PRINCIPLE {pr.code} · {pVisibleCount} INDICATOR</span><h2>{pr.title}</h2></div>
-              <div className={styles.progressWrap}><div className={styles.progress}><i style={{width:`${pPct}%`}}/></div><strong>{pPct}%</strong><span>{isOpen?'−':'+'}</span></div>
-            </button>
-            {isOpen?<div className={styles.criteriaList}>
-              {visibleCriteria.map(cr=>{
-                const cIndicators=indsByC[cr.id]||[];
-                const cVisible=cr._visible;
-                const cVerified=cIndicators.filter(ind=>{const it=itemMap[ind.id];return it?.self_status==='Fulfilled'&&it?.verifier_status==='Verified'}).length;
-                const cPct=cIndicators.length?Math.round(cVerified/cIndicators.length*100):0;
-                return <section className={styles.criterion} key={cr.id}>
-                  <div className={styles.criterionHead}><div><span className={styles.code}>CRITERION {cr.code} · {cVisible.length}/{cIndicators.length} shown</span><h3>{cr.title}</h3></div><span>{cPct}% compliant</span></div>
-                  <div className={styles.indicatorList}>
-                    {cVisible.map(ind=>{
-                      const item=itemMap[ind.id];if(!item)return null;
-                      const isItemOpen=!!openItems[ind.id],files=evidenceByItem[item.id]||[],isDirty=!!dirtyItems[item.id];
-                      return <div className={styles.indicator} key={ind.id}>
-                        <button className={styles.indicatorRow} onClick={()=>setOpenItems(v=>({...v,[ind.id]:!v[ind.id]}))}>
-                          <span className={styles.code}>{ind.code}</span>
-                          <span className={styles.indicatorText}>{ind.description}</span>
-                          <span className="sims-row-meta"><span className={`${styles.pill} ${selfStatusClass(item.self_status)}`}>{item.self_status}</span><span className={`${styles.pill} ${verifyClass(item.verifier_status)}`}>{item.verifier_status}</span>{files.length?<span className="sims-mini-badge evidence">{files.length} evidence</span>:null}{isDirty?<span className="sims-mini-badge unsaved">Unsaved</span>:null}<span>{isItemOpen?'−':'+'}</span></span>
-                        </button>
-                        {isItemOpen?<div className={styles.editor}>
-                          <div className={styles.requirement}><strong>INDICATOR REQUIREMENT</strong><p>{ind.description}</p></div>
-                          {ind.object_evidence?<div className="sims-evidence-req"><strong>OBJECT EVIDENCE</strong><p>{ind.object_evidence}</p></div>:null}
-                          <div className={styles.editorGrid}>
-                            <label className="form-field"><span>Assessment Status</span><select value={item.self_status||'Not Started'} onChange={e=>patchItem(item.id,{self_status:e.target.value})}>{SELF_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
-                            <label className="form-field"><span>Verifier Status</span><select value={item.verifier_status||'Pending'} onChange={e=>patchItem(item.id,{verifier_status:e.target.value})}>{VERIFY_STATUSES.map(x=><option key={x}>{x}</option>)}</select></label>
-                            <label className={`form-field ${styles.full}`}><span>User Explanation</span><textarea rows="3" value={item.explanation||''} onChange={e=>patchItem(item.id,{explanation:e.target.value})} placeholder="Jelaskan pemenuhan indikator atau gap yang ditemukan…"/></label>
-                            <label className={`form-field ${styles.full}`}><span>Verifier Notes</span><textarea rows="2" value={item.verifier_notes||''} onChange={e=>patchItem(item.id,{verifier_notes:e.target.value})} placeholder="Catatan verifikasi…"/></label>
-                          </div>
-                          <div className={styles.evidenceBox}><div><strong>Supporting Evidence</strong><span>{files.length} file(s)</span></div><div className={styles.evidenceList}>{files.length?files.map(ev=><button key={ev.id} className={styles.fileChip} onClick={()=>openEvidence(ev)}>{ev.file_name}</button>):<span className="sims-no-evidence">Belum ada evidence.</span>}</div><label className={styles.uploadBtn}>+ Upload Evidence<input hidden type="file" onChange={e=>uploadEvidence(item,e.target.files?.[0])}/></label></div>
-                          <div className={styles.saveRow}><button className="primary-btn" disabled={savingId===item.id} onClick={()=>saveItem(ind.id)}>{savingId===item.id?'Saving…':isDirty?'Save Changes':'Save Assessment'}</button><span className={`${styles.pill} ${verifyClass(item.verifier_status)}`}>{item.verifier_status}</span>{item.self_status==='Not Fulfilled'?<span className={styles.gapNote}>Gap ini otomatis masuk Sustainability Action Plan.</span>:null}</div>
-                        </div>:null}
-                      </div>
-                    })}
-                  </div>
-                </section>
-              })}
-            </div>:null}
-          </article>
-        })}
-      </section>}
     </>:null}
-
-    {!loading&&!companyId?<section className={styles.empty}><strong>Select Company / PT</strong><span>Pilih PT pada bagian atas. Assessment akan terbuka otomatis tanpa upload Excel.</span></section>:null}
+    {!loading&&!companyId?<section className={styles.empty}><strong>Select Company / PT</strong><span>Pilih PT. Assessment NDPE akan dibuat atau dimuat otomatis untuk tahun yang dipilih.</span></section>:null}
   </div>
 }
