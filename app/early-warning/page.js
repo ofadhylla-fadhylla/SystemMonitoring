@@ -1,5 +1,5 @@
-import EarlyWarningSystem from '../../components/EarlyWarningSystem';
+import EarlyWarningSystemV2 from '../../components/EarlyWarningSystemV2';
 
 export default function EarlyWarningPage(){
-  return <EarlyWarningSystem/>;
+  return <EarlyWarningSystemV2/>;
 }
