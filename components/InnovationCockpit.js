@@ -14,6 +14,28 @@ const CORE=[
 const activeAction=s=>!['Completed','Closed'].includes(s||'Open');
 const pct=(a,b)=>b?Math.round(a/b*100):0;
 
+async function fetchPaged(makeQuery,pageSize=1000){
+  const all=[];let from=0;
+  while(true){
+    const q=await makeQuery().range(from,from+pageSize-1);
+    if(q.error)throw q.error;
+    const rows=q.data||[];all.push(...rows);
+    if(rows.length<pageSize)break;
+    from+=pageSize;
+  }
+  return all;
+}
+
+async function fetchChunked(ids,makeQuery,chunkSize=250){
+  const all=[];
+  for(let i=0;i<ids.length;i+=chunkSize){
+    const part=ids.slice(i,i+chunkSize);
+    const rows=await fetchPaged(()=>makeQuery(part));
+    all.push(...rows);
+  }
+  return all;
+}
+
 export default function InnovationCockpit(){
   const [year,setYear]=useState(new Date().getFullYear());
   const [loading,setLoading]=useState(true);
@@ -50,15 +72,13 @@ export default function InnovationCockpit(){
       ]);
       if(ass.error||mp.error)throw(ass.error||mp.error);
       const assessmentIds=(ass.data||[]).map(x=>x.id);
-      const items=assessmentIds.length?await supabase.from('sims_assessment_items').select('id,assessment_id,indicator_id,self_status,verifier_status,updated_at').in('assessment_id',assessmentIds):{data:[]};
-      if(items.error)throw items.error;
-      const itemIds=(items.data||[]).map(x=>x.id);
-      const [ap,ev]=await Promise.all([
-        itemIds.length?supabase.from('sims_action_plans').select('id,assessment_item_id,status,priority,deadline,verifier_status,updated_at').in('assessment_item_id',itemIds):Promise.resolve({data:[]}),
-        itemIds.length?supabase.from('sims_evidence').select('id,assessment_item_id').in('assessment_item_id',itemIds):Promise.resolve({data:[]}),
+      const itemRows=assessmentIds.length?await fetchPaged(()=>supabase.from('sims_assessment_items').select('id,assessment_id,indicator_id,self_status,verifier_status,updated_at').in('assessment_id',assessmentIds)):[];
+      const itemIds=itemRows.map(x=>x.id);
+      const [actionRows,evidenceRows]=await Promise.all([
+        itemIds.length?fetchChunked(itemIds,ids=>supabase.from('sims_action_plans').select('id,assessment_item_id,status,priority,deadline,verifier_status,updated_at').in('assessment_item_id',ids)):Promise.resolve([]),
+        itemIds.length?fetchChunked(itemIds,ids=>supabase.from('sims_evidence').select('id,assessment_item_id').in('assessment_item_id',ids)):Promise.resolve([]),
       ]);
-      if(ap.error||ev.error)throw(ap.error||ev.error);
-      setData({companies:co.data||[],standard:st.data,indicators:ind.data||[],assessments:ass.data||[],items:items.data||[],mappings:mp.data||[],actions:ap.data||[],evidence:ev.data||[]});
+      setData({companies:co.data||[],standard:st.data,indicators:ind.data||[],assessments:ass.data||[],items:itemRows,mappings:mp.data||[],actions:actionRows,evidence:evidenceRows});
     }catch(e){setError(e.message||String(e));setData(v=>({...v,assessments:[],items:[],actions:[],evidence:[]}));}
     finally{setLoading(false);}
   }
@@ -76,7 +96,7 @@ export default function InnovationCockpit(){
   },[data.indicators,data.mappings]);
 
   const portfolio=useMemo(()=>{
-    const totalPT=data.companies.length,covered=data.assessments.length;
+    const totalPT=data.companies.length,covered=new Set(data.assessments.map(x=>x.company_id)).size;
     const total=data.items.length,verified=data.items.filter(x=>x.self_status==='Fulfilled'&&x.verifier_status==='Verified').length;
     const assessed=data.items.filter(x=>x.self_status&&x.self_status!=='Not Started').length;
     const gaps=data.items.filter(x=>x.self_status==='Not Fulfilled').length;
