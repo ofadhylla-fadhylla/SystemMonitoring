@@ -1,4 +1,5 @@
 import './globals.css';
+import './sims-ui.css';
 import AuthGate from '../components/AuthGate';
 import RiskWeightsBootstrap from '../components/RiskWeightsBootstrap';
 
