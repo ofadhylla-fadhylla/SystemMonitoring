@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { canAccessPath } from '../lib/systemUsers';
 
 const groups = [
+  { key:'innovation', label:'Innovation', icon:'innovation', tone:'purple', items:[['/innovation-cockpit','Innovation Cockpit'],['/innovation-impact','Innovation Impact'],['/early-warning','Early Warning'],['/audit-room','Digital Audit Room'],['/competition-demo','Presentation Mode']] },
   { key:'grievance', label:'Grievance', icon:'grievance', tone:'orange', items:[['/grievances','Grievance Tracker'],['/actions','Action Monitoring']] },
   { key:'certification', label:'Certification', icon:'certificate', tone:'blue', items:[['/audits','Audit Monitoring'],['/certificates','Certification Monitoring'],['/quotations','Penawaran Harga']] },
   { key:'sims', label:'SIMS', icon:'sims', tone:'green', items:[['/sims/assessment','NDPE Policy & Report'],['/sims/action-plan','Sustainability Action Plan'],['/sims/compliance','Sustainability Compliance Level']] },
@@ -21,6 +22,7 @@ export default function Sidebar({currentUser}){
   const [openGroups,setOpenGroups]=useState(Object.fromEntries(groups.map(g=>[g.key,g.items.some(([h])=>isPathActive(pathname,h))])));
   useEffect(()=>{setOpenGroups(current=>{const next={...current};groups.forEach(g=>{if(g.items.some(([h])=>isPathActive(pathname,h)))next[g.key]=true});return next})},[pathname]);
   const toggleGroup=key=>setOpenGroups(current=>({...current,[key]:!current[key]}));
+  const innovationGroup=visibleGroups.find(g=>g.key==='innovation');
   const firstGroups=visibleGroups.filter(g=>['grievance','certification'].includes(g.key));
   const lastGroups=visibleGroups.filter(g=>['sims','risk'].includes(g.key));
 
@@ -37,11 +39,7 @@ export default function Sidebar({currentUser}){
     <div className="brand smd-brand"><div className="smd-logo-shell" aria-label="SMD logo"><SmdLogo/></div><div className="smd-brand-copy"><div className="smd-brand-title">SMD</div><div className="smd-brand-subtitle">SYSTEM MONITORING DASHBOARD</div></div></div>
     <nav className="sidebar-nav">
       {canAccessPath(role,'/')?<Link href="/" className={`nav-item ${isPathActive(pathname,'/')?'active':''}`}><span className="nav-visual lime"><NavIcon type="home"/></span><span>Dashboard</span></Link>:null}
-      {canAccessPath(role,'/competition-demo')?<Link href="/competition-demo" className={`nav-item ${isPathActive(pathname,'/competition-demo')?'active':''}`}><span className="nav-visual lime"><NavIcon type="demo"/></span><span>Competition Demo</span></Link>:null}
-      {canAccessPath(role,'/innovation-cockpit')?<Link href="/innovation-cockpit" className={`nav-item ${isPathActive(pathname,'/innovation-cockpit')?'active':''}`}><span className="nav-visual purple"><NavIcon type="innovation"/></span><span>Innovation Cockpit</span></Link>:null}
-      {canAccessPath(role,'/innovation-impact')?<Link href="/innovation-impact" className={`nav-item ${isPathActive(pathname,'/innovation-impact')?'active':''}`}><span className="nav-visual blue"><NavIcon type="impact"/></span><span>Innovation Impact</span></Link>:null}
-      {canAccessPath(role,'/early-warning')?<Link href="/early-warning" className={`nav-item ${isPathActive(pathname,'/early-warning')?'active':''}`}><span className="nav-visual orange"><NavIcon type="warning"/></span><span>Early Warning</span></Link>:null}
-      {canAccessPath(role,'/audit-room')?<Link href="/audit-room" className={`nav-item ${isPathActive(pathname,'/audit-room')?'active':''}`}><span className="nav-visual green"><NavIcon type="auditroom"/></span><span>Digital Audit Room</span></Link>:null}
+      {innovationGroup?<SidebarGroup key={innovationGroup.key} group={innovationGroup} pathname={pathname} openGroups={openGroups} toggleGroup={toggleGroup}/>:null}
       {canAccessPath(role,'/company-360')?<Link href="/company-360" className={`nav-item ${isPathActive(pathname,'/company-360')?'active':''}`}><span className="nav-visual teal"><NavIcon type="company360"/></span><span>PT 360° Profile</span></Link>:null}
       {firstGroups.map(group=><SidebarGroup key={group.key} {...{group,pathname,openGroups,toggleGroup}}/>)}
       {canAccessPath(role,'/master-data')?<><div className="sidebar-section-separator"/><Link href="/master-data" className={`nav-item ${isPathActive(pathname,'/master-data')?'active':''}`}><span className="nav-visual purple"><NavIcon type="master"/></span><span>Master Company & Site</span></Link></>:null}
