@@ -8,7 +8,7 @@ import { canAccessPath } from '../lib/systemUsers';
 const groups = [
   { key:'grievance', label:'Grievance', icon:'grievance', tone:'orange', items:[['/grievances','Grievance Tracker'],['/actions','Action Monitoring']] },
   { key:'certification', label:'Certification', icon:'certificate', tone:'blue', items:[['/audits','Audit Monitoring'],['/certificates','Certification Monitoring'],['/quotations','Penawaran Harga']] },
-  { key:'sims', label:'SIMS', icon:'sims', tone:'green', items:[['/sims/assessment','Sustainability Assessment'],['/sims/action-plan','Sustainability Action Plan'],['/sims/compliance','Sustainability Compliance Level']] },
+  { key:'sims', label:'SIMS', icon:'sims', tone:'green', items:[['/sims/assessment','NDPE Policy & Report'],['/sims/action-plan','Sustainability Action Plan'],['/sims/compliance','Sustainability Compliance Level']] },
   { key:'risk', label:'Risk Assessment', icon:'risk', tone:'cyan', items:[['/spatial-monitoring','Monitoring Spasial'],['/non-spatial-monitoring','Monitoring Non Spasial']] },
 ];
 
