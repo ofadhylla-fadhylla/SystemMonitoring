@@ -16,11 +16,12 @@ export default function AuthGate({ children }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [dbProfile, setDbProfile] = useState(null);
-  const [roleSource, setRoleSource] = useState('fallback');
+  const [roleSource, setRoleSource] = useState('unverified');
   const [error, setError] = useState('');
 
   useEffect(() => {
     let active = true;
+    let generation = 0;
     const configError = getSupabaseConfigError();
 
     if (configError || !supabase) {
@@ -31,11 +32,15 @@ export default function AuthGate({ children }) {
 
     async function hydrate(currentSession) {
       if (!active) return;
+      const attempt=++generation;
+      setError('');
       setSession(currentSession || null);
+      setDbProfile(null);
+      setRoleSource('unverified');
 
       if (!currentSession?.user) {
         setDbProfile(null);
-        setRoleSource('fallback');
+        setRoleSource('unverified');
         setLoading(false);
         if (!isLogin) router.replace('/login');
         return;
@@ -52,7 +57,7 @@ export default function AuthGate({ children }) {
 
       const email=String(currentSession.user.email||'').toLowerCase();
       const roleResult=await supabase.from('app_user_roles').select('display_name,role,active').eq('email',email).maybeSingle();
-      if (!active) return;
+      if (!active || attempt!==generation) return;
 
       if (!roleResult.error) {
         if (!roleResult.data?.active) {
@@ -67,18 +72,23 @@ export default function AuthGate({ children }) {
         setRoleSource('database');
       } else {
         setDbProfile(null);
-        setRoleSource('fallback');
+        setRoleSource('unverified');
+        setError('Hak akses tidak dapat diverifikasi. Muat ulang halaman untuk mencoba kembali.');
+        setLoading(false);
+        return;
       }
 
       setLoading(false);
       if (isLogin) router.replace('/');
     }
 
-    supabase.auth.getSession().then(({ data }) => hydrate(data.session));
+    const start=()=>supabase.auth.getSession().then(({data,error})=>{if(!active)return;if(error)throw error;return hydrate(data.session);}).catch(()=>{if(active){setError('Sesi tidak dapat diverifikasi. Muat ulang halaman.');setLoading(false);}});
+    start();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setLoading(true);
-      hydrate(nextSession);
+      // Defer database requests outside Supabase's auth callback.
+      setTimeout(()=>{if(active)hydrate(nextSession).catch(()=>{if(active){setError('Hak akses tidak dapat diverifikasi. Muat ulang halaman.');setLoading(false);}});},0);
     });
 
     return () => {
@@ -90,8 +100,8 @@ export default function AuthGate({ children }) {
   const currentUser = useMemo(() => {
     const fallback=getSystemUserByEmail(session?.user?.email);
     if(!fallback)return null;
-    if(roleSource!=='database'||!dbProfile)return fallback;
-    return {...fallback,name:dbProfile.display_name||fallback.name,role:dbProfile.role||fallback.role};
+    if(roleSource!=='database'||!dbProfile?.active||!dbProfile.role)return null;
+    return {...fallback,name:dbProfile.display_name||fallback.name,role:dbProfile.role};
   }, [session,dbProfile,roleSource]);
 
   async function signOut() {
@@ -119,7 +129,7 @@ export default function AuthGate({ children }) {
       <div className={styles.centerScreen}>
         <div className={styles.errorCard}>
           <h2>Login belum dapat digunakan</h2>
-          <p>{error}</p>
+          <p>{error}</p><button className={styles.signOutButton} type="button" onClick={()=>window.location.reload()}>Muat ulang</button>
         </div>
       </div>
     );

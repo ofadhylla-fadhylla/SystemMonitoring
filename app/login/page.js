@@ -37,18 +37,17 @@ export default function LoginPage() {
     }
 
     setBusy(true);
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: selectedUser.email,
-      password,
-    });
-    setBusy(false);
-
-    if (signInError) {
-      setError('Password salah atau akun belum dibuat/diaktifkan di Supabase.');
-      return;
-    }
-
-    window.location.href = '/';
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({email:selectedUser.email,password});
+      if(signInError){
+        const invalid=signInError.code==='invalid_credentials'||signInError.code==='email_not_confirmed';
+        setError(invalid?'Kredensial tidak valid atau akun belum terkonfirmasi.':signInError.status===429?'Terlalu banyak percobaan. Coba kembali sesuai petunjuk layanan.':'Layanan autentikasi belum dapat memproses login. Coba muat ulang atau hubungi administrator.');
+        return;
+      }
+      window.location.href='/';
+    } catch {
+      setError('Koneksi autentikasi gagal. Periksa koneksi dan coba kembali.');
+    } finally {setBusy(false);}
   }
 
   return (
@@ -65,7 +64,7 @@ export default function LoginPage() {
         <div className={styles.heroCopy}>
           <span>SUSTAINABILITY &amp; COMPLIANCE</span>
           <h1>Monitoring workspace untuk Sustainability.</h1>
-          <p>Grievance, audit, certification, NDPE, quotation dan weekly report dalam satu sistem.</p>
+          <p>Dashboard, company profile, monitoring, certification, grievance, supplier risk dan knowledge center dalam satu sistem.</p>
         </div>
 
         <div className={styles.securityNote}>Private access · Supabase Authentication</div>
