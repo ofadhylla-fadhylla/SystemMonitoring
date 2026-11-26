@@ -3,8 +3,8 @@
   "version": "0.9.1",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/prepare-document-assets.cjs && next dev",
+    "build": "node scripts/prepare-document-assets.cjs && next build",
     "start": "next start"
   },
   "dependencies": {
@@ -13,6 +13,11 @@
     "react": "latest",
     "react-dom": "latest",
     "docx": "latest",
-    "jspdf": "latest"
+    "jspdf": "latest",
+    "pdfjs-dist": "6.4.299",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/ind": "1.0.0"
   }
 }

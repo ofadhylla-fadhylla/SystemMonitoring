@@ -1,0 +1,15 @@
+const fs=require('node:fs'),path=require('node:path');
+const root=path.resolve(__dirname,'..'),mods=path.join(root,'node_modules'),out=path.join(root,'public','smd-doc-assets');
+fs.mkdirSync(out,{recursive:true});
+const cp=(src,dst)=>{if(!fs.existsSync(src))throw Error('Missing document asset '+src);fs.cpSync(src,dst,{recursive:true});};
+const pdf=path.join(mods,'pdfjs-dist');
+for(const n of ['pdf.mjs','pdf.worker.mjs'])cp(path.join(pdf,'build',n),path.join(out,n));
+for(const n of ['cmaps','standard_fonts','wasm','iccs'])if(fs.existsSync(path.join(pdf,n)))cp(path.join(pdf,n),path.join(out,n));
+fs.writeFileSync(path.join(out,'pdf-loader.mjs'),"import * as pdfjs from './pdf.mjs'; globalThis.smdPdfJs=pdfjs;");
+cp(path.join(mods,'tesseract.js','dist','tesseract.min.js'),path.join(out,'tesseract.min.js'));
+cp(path.join(mods,'tesseract.js','dist','worker.min.js'),path.join(out,'worker.min.js'));
+const core=path.join(mods,'tesseract.js-core'),coreOut=path.join(out,'core');fs.mkdirSync(coreOut,{recursive:true});
+const cores=fs.readdirSync(core).filter(n=>/^tesseract-core.*\.wasm(?:\.js)?$/.test(n));if(!cores.length)throw Error('Missing Tesseract WASM assets');for(const n of cores)cp(path.join(core,n),path.join(coreOut,n));
+const langOut=path.join(out,'lang');fs.mkdirSync(langOut,{recursive:true});
+for(const lang of ['eng','ind'])cp(path.join(mods,'@tesseract.js-data',lang,'4.0.0_best_int',lang+'.traineddata.gz'),path.join(langOut,lang+'.traineddata.gz'));
+console.log('SMD local document extraction assets prepared');
