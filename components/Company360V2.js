@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { supabase, getSupabaseConfigError } from '../lib/supabaseClient';
 import { daysUntil, formatDate } from '../lib/monitoring';
 import { calculateExecutiveRisk } from '../lib/riskScore';
+import { fetchAllRows } from '../lib/fetchAllRows';
 
 export default function Company360V2(){
   const [data,setData]=useState({companies:[],sites:[],certifications:[],audits:[],grievances:[],actions:[],simsAssessments:[],simsItems:[],simsStandards:[],suppliers:[],riskAssessments:[],auditLog:[]});
@@ -20,17 +21,17 @@ export default function Company360V2(){
     if(ce||!supabase){setError(ce||'Supabase is not configured.');setLoading(false);return;}
     setLoading(true);setError('');
     try { const [c,s,cert,aud,g,act,sa,si,ss,sp,ra,al]=await Promise.all([
-      supabase.from('companies').select('*').eq('status','Active').order('company_code'),
-      supabase.from('sites').select('*').eq('status','Active').order('site_name'),
-      supabase.from('certifications').select('*').order('valid_until'),
-      supabase.from('audit_events').select('*').order('start_date'),
-      supabase.from('grievances').select('*').order('opened_date',{ascending:false}),
-      supabase.from('grievance_actions').select('*').order('target_date'),
-      supabase.from('sims_assessments').select('*').order('assessment_year',{ascending:false}),
-      supabase.from('sims_assessment_items').select('*'),
-      supabase.from('sims_standards').select('*').order('name'),
-      supabase.from('spatial_suppliers').select('*').order('supplier_name'),
-      supabase.from('supplier_risk_assessments').select('*').order('assessed_at',{ascending:false}),
+      fetchAllRows(()=>supabase.from('companies').select('*').eq('status','Active').order('company_code')),
+      fetchAllRows(()=>supabase.from('sites').select('*').eq('status','Active').order('site_name')),
+      fetchAllRows(()=>supabase.from('certifications').select('*').order('valid_until')),
+      fetchAllRows(()=>supabase.from('audit_events').select('*').order('start_date')),
+      fetchAllRows(()=>supabase.from('grievances').select('*').order('opened_date',{ascending:false})),
+      fetchAllRows(()=>supabase.from('grievance_actions').select('*').order('target_date')),
+      fetchAllRows(()=>supabase.from('sims_assessments').select('*').order('assessment_year',{ascending:false})),
+      fetchAllRows(()=>supabase.from('sims_assessment_items').select('*')),
+      fetchAllRows(()=>supabase.from('sims_standards').select('*').order('name')),
+      fetchAllRows(()=>supabase.from('spatial_suppliers').select('*').order('supplier_name')),
+      fetchAllRows(()=>supabase.from('supplier_risk_assessments').select('*').order('assessed_at',{ascending:false})),
       supabase.from('audit_log').select('*').order('changed_at',{ascending:false}).limit(300),
     ]);
     const hard=c.error||s.error||cert.error||aud.error||g.error||act.error||sa.error||si.error||ss.error||sp.error||ra.error;

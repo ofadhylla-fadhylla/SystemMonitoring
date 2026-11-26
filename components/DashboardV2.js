@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { supabase, getSupabaseConfigError } from '../lib/supabaseClient';
 import { daysUntil, formatDate, todayISO } from '../lib/monitoring';
 import { calculateExecutiveRisk } from '../lib/riskScore';
+import { fetchAllRows } from '../lib/fetchAllRows';
 
 const CERT_STANDARDS=['ISPO','ISCC EU','ISCC CORSIA','INS','GGL','EUDR','SMETA','VDF'];
 
@@ -23,16 +24,16 @@ export default function DashboardV2(){
     setLoading(true);setError('');
     try {
     const [g,c,a,co,ac,sa,si,ss,sp,ra]=await Promise.all([
-      supabase.from('grievances').select('*').order('opened_date',{ascending:false}),
-      supabase.from('certifications').select('*').order('valid_until'),
-      supabase.from('audit_events').select('*').order('start_date'),
-      supabase.from('companies').select('*').order('company_code'),
-      supabase.from('grievance_actions').select('*').order('target_date'),
-      supabase.from('sims_assessments').select('*').order('assessment_year',{ascending:false}),
-      supabase.from('sims_assessment_items').select('*'),
-      supabase.from('sims_standards').select('*').order('name'),
-      supabase.from('spatial_suppliers').select('*').order('supplier_name'),
-      supabase.from('supplier_risk_assessments').select('*').order('assessed_at',{ascending:false}),
+      fetchAllRows(()=>supabase.from('grievances').select('*').order('opened_date',{ascending:false})),
+      fetchAllRows(()=>supabase.from('certifications').select('*').order('valid_until')),
+      fetchAllRows(()=>supabase.from('audit_events').select('*').order('start_date')),
+      fetchAllRows(()=>supabase.from('companies').select('*').order('company_code')),
+      fetchAllRows(()=>supabase.from('grievance_actions').select('*').order('target_date')),
+      fetchAllRows(()=>supabase.from('sims_assessments').select('*').order('assessment_year',{ascending:false})),
+      fetchAllRows(()=>supabase.from('sims_assessment_items').select('*')),
+      fetchAllRows(()=>supabase.from('sims_standards').select('*').order('name')),
+      fetchAllRows(()=>supabase.from('spatial_suppliers').select('*').order('supplier_name')),
+      fetchAllRows(()=>supabase.from('supplier_risk_assessments').select('*').order('assessed_at',{ascending:false})),
     ]);
     const sources=[['Grievances',g],['Certificates',c],['Audits',a],['Companies',co],['Actions',ac],['SIMS assessments',sa],['SIMS items',si],['SIMS standards',ss],['Suppliers',sp],['Supplier risk',ra]];
     const failed=sources.filter(([,result])=>result.error).map(([name])=>name);
@@ -52,7 +53,7 @@ export default function DashboardV2(){
   const scoped=useMemo(()=>{
     const match=record=>{
       if(!selectedCompany)return true;
-      if(record?.company_id===selectedCompany.id)return true;
+      if(record?.company_id)return record.company_id===selectedCompany.id;
       const hay=`${record?.company||''} ${record?.company_code||''} ${record?.entity||''}`.toLowerCase();
       const code=String(selectedCompany.company_code||'').toLowerCase();
       const name=String(selectedCompany.company_name||'').toLowerCase();
