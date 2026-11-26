@@ -6,3 +6,6 @@
 - Source: NASA FIRMS active-fire downloads https://firms.modaps.eosdis.nasa.gov/active_fire/ . Live area API requires MAP_KEY: https://firms.modaps.eosdis.nasa.gov/api/area/ . Not configured; no scheduled feed.
 - SHP ZIP, polygon intersection area, continuous satellite deforestation monitoring and alerts are pending. Convert SHP to WGS84 GeoJSON in QGIS for now. No new external dependencies or database schema modifications.
 - UAT: import sample GeoJSON polygon with hole, KML point, FIRMS CSV; verify invalid coordinates rejected, map tabs, point inside/outside/hole and no-boundary cases, CSV export and scoped access. Do not upload test records into the shared operational database.
+
+## Iteration 2 — restricted SHP ZIP import
+Supports one WGS84 geographic 2D Point/Polygon shapefile plus matching .prj in ZIP, browser-side stored/deflate ZIP with checksums, bounded compressed and expanded sizes, and existing geometry validation. Does not import DBF attributes, reproject CRS, handle Z/M geometry or perform polygon topology repair. Test actual customer shapefiles before production. Live satellite feeds remain pending MAP_KEY and provider authorization.
