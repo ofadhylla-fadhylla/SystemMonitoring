@@ -1,0 +1,4 @@
+import Link from 'next/link';
+export default function SearchPage(){
+  return <main><div style={{background:'white',border:'1px solid #dbe4de',borderRadius:18,padding:'64px 28px',textAlign:'center'}}><div style={{color:'#16734d',fontSize:12,letterSpacing:2,fontWeight:700}}>SMD 2.0 · DEVELOPMENT PREVIEW</div><h1 style={{fontSize:40,margin:'20px 0 8px',color:'#064b38'}}>SMD Search</h1><p>Search sustainability SOPs, policies and controlled documents.</p><div style={{maxWidth:620,margin:'24px auto',border:'1px solid #dbe4de',borderRadius:30,padding:16,color:'#718179'}}>Document search will be enabled after the document database is ready.</div><p>Document indexing, access controls and search are not yet implemented.</p><Link href="/documents" style={{color:'#126045',fontWeight:700}}>Open existing NDPE records →</Link></div></main>
+}
