@@ -3,10 +3,11 @@ import {useEffect,useMemo,useState} from 'react';
 import Link from 'next/link';
 import {supabase} from '../../lib/supabaseClient';
 import '../smd2-workspace.css';
+import {supplierRisk} from '../../lib/moduleMetrics';
 
 const levels=['Critical','High','Medium','Low','Unverified'];
 const colors=['#b8443d','#d9833c','#d7af48','#399765','#a7b4ab'];
-function level(r){return !r||r.assessment_json?.risk?.assessment_status==='INCOMPLETE'||r.assessment_json?.assessment_status==='INCOMPLETE'||!levels.slice(0,4).includes(r.risk_level)?'Unverified':r.risk_level;}
+function level(r){return supplierRisk(r);}
 function latest(rows,key){const result={};for(const row of rows){if(!result[row[key]])result[row[key]]=row;}return result;}
 function effectiveDecisions(rows){const result={};const binding={};for(const r of rows){if(!result[r.supplier_id])result[r.supplier_id]=r;if(!binding[r.supplier_id]&&r.decision!=='Review')binding[r.supplier_id]=r;}for(const id of Object.keys(result)){if(result[id].decision==='Review'&&binding[id]?.decision==='Blocked')result[id]={...binding[id],reason:binding[id].reason+' · Review pending: '+result[id].reason};}return result;}
 async function allRows(table,order,ascending=true){let result=[];for(let start=0;;start+=500){const {data,error}=await supabase.from(table).select('*').order(order,{ascending}).order('id',{ascending:false}).range(start,start+499);if(error)throw error;result.push(...data);if(data.length<500)return result;}}

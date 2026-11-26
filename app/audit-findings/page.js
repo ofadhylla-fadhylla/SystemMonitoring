@@ -2,11 +2,12 @@
 import {useEffect,useState} from 'react';
 import {supabase} from '../../lib/supabaseClient';
 import Link from 'next/link';
+import {fetchAllRows} from '../../lib/fetchAllRows';
 import '../smd2-workspace.css';
 const empty={audit_id:'',category:'NC',reference:'',description:'',pic:'',due_date:''};
 export default function Findings(){
  const [audits,setAudits]=useState([]),[companies,setCompanies]=useState([]),[rows,setRows]=useState([]),[events,setEvents]=useState([]),[form,setForm]=useState(empty),[filter,setFilter]=useState('All'),[q,setQ]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[msg,setMsg]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[status,setStatus]=useState('In Progress'),[note,setNote]=useState('');
- async function load(){setLoading(true);setError('');try{const results=await Promise.all([supabase.from('audit_events').select('id,title,company_id,start_date,audit_type').order('start_date',{ascending:false}),supabase.from('companies').select('id,company_code'),supabase.from('smd2_audit_findings').select('*').order('created_at',{ascending:false}),supabase.from('smd2_finding_updates').select('*').order('created_at',{ascending:false}).order('id',{ascending:false})]);if(results.some(x=>x.error))throw Error(results.find(x=>x.error).error.message);setAudits(results[0].data);setCompanies(results[1].data);setRows(results[2].data);setEvents(results[3].data);}catch(e){setError('Findings database unavailable: '+e.message);}finally{setLoading(false);}}
+ async function load(){setLoading(true);setError('');try{const results=await Promise.all([supabase.from('audit_events').select('id,title,company_id,start_date,audit_type').order('start_date',{ascending:false}),supabase.from('companies').select('id,company_code'),fetchAllRows(()=>supabase.from('smd2_audit_findings').select('*').order('created_at',{ascending:false})),fetchAllRows(()=>supabase.from('smd2_finding_updates').select('*').order('created_at',{ascending:false}))]);if(results.some(x=>x.error))throw Error(results.find(x=>x.error).error.message);setAudits(results[0].data);setCompanies(results[1].data);setRows(results[2].data);setEvents(results[3].data);}catch(e){setError('Findings database unavailable: '+e.message);}finally{setLoading(false);}}
  useEffect(()=>{load()},[]);
  const latest={};events.forEach(e=>{if(!latest[e.finding_id])latest[e.finding_id]=e});
  const current=r=>latest[r.id]?.status||'Open';

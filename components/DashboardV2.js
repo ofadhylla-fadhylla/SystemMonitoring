@@ -6,6 +6,7 @@ import { supabase, getSupabaseConfigError } from '../lib/supabaseClient';
 import { daysUntil, formatDate, todayISO } from '../lib/monitoring';
 import { calculateExecutiveRisk } from '../lib/riskScore';
 import { fetchAllRows } from '../lib/fetchAllRows';
+import IntegratedModules from './IntegratedModules';
 
 const CERT_STANDARDS=['ISPO','ISCC EU','ISCC CORSIA','INS','GGL','EUDR','SMETA','VDF'];
 
@@ -15,13 +16,14 @@ export default function DashboardV2(){
   const [error,setError]=useState('');
   const [companyFilter,setCompanyFilter]=useState('All');
   const [drill,setDrill]=useState('');
+  const [refreshKey,setRefreshKey]=useState(0);
 
   useEffect(()=>{loadDashboard()},[]);
 
   async function loadDashboard(){
     const ce=getSupabaseConfigError();
     if(ce||!supabase){setError(ce||'Supabase is not configured.');setLoading(false);return;}
-    setLoading(true);setError('');
+    setLoading(true);setError('');setRefreshKey(k=>k+1);
     try {
     const [g,c,a,co,ac,sa,si,ss,sp,ra]=await Promise.all([
       fetchAllRows(()=>supabase.from('grievances').select('*').order('opened_date',{ascending:false})),
@@ -54,10 +56,10 @@ export default function DashboardV2(){
     const match=record=>{
       if(!selectedCompany)return true;
       if(record?.company_id)return record.company_id===selectedCompany.id;
-      const hay=`${record?.company||''} ${record?.company_code||''} ${record?.entity||''}`.toLowerCase();
+      const candidates=[record?.company,record?.company_code,record?.entity].map(v=>String(v||'').trim().toLowerCase()).filter(Boolean);
       const code=String(selectedCompany.company_code||'').toLowerCase();
       const name=String(selectedCompany.company_name||'').toLowerCase();
-      return (!!code&&hay.includes(code))||!!name&&hay.includes(name);
+      return (!!code&&candidates.includes(code))||!!name&&candidates.includes(name);
     };
     const grievances=data.grievances.filter(match);
     const grievanceIds=new Set(grievances.map(g=>g.id));
@@ -83,7 +85,7 @@ export default function DashboardV2(){
   },[data.riskAssessments]);
 
   const stats=useMemo(()=>{
-    const activeCert=scoped.certifications.filter(c=>c.status==='Certified'&&(daysUntil(c.valid_until)===null||daysUntil(c.valid_until)>=0)).length;
+    const activeCert=scoped.certifications.filter(c=>c.status==='Certified'&&daysUntil(c.valid_until)!==null&&daysUntil(c.valid_until)>=0).length;
     const expiring90=scoped.certifications.filter(c=>{const d=daysUntil(c.valid_until);return d!==null&&d>=0&&d<=90}).length;
     const expired=scoped.certifications.filter(c=>{const d=daysUntil(c.valid_until);return c.status==='Expired'||(d!==null&&d<0)}).length;
     const upcoming30=scoped.audits.filter(a=>{const d=daysUntil(a.start_date);return d!==null&&d>=0&&d<=30&&!['Done','Cancelled'].includes(a.status)}).length;
@@ -98,10 +100,10 @@ export default function DashboardV2(){
   const risk=useMemo(()=>calculateExecutiveRisk({certifications:scoped.certifications,grievances:scoped.grievances,actions:scoped.actions,simsItems:scopedSimsItems,suppliers:scoped.suppliers,latestRiskBySupplier}),[scoped,scopedSimsItems,latestRiskBySupplier]);
 
   const standardSummary=useMemo(()=>{
-    const map={};for(const c of scoped.certifications){const key=normalizeStandardLabel(c.standard);if(!map[key])map[key]={standard:key,total:0,active:0,expiring:0,expired:0};map[key].total++;const d=daysUntil(c.valid_until);if(c.status==='Certified'&&(d===null||d>=0))map[key].active++;if(d!==null&&d>=0&&d<=90)map[key].expiring++;if(c.status==='Expired'||(d!==null&&d<0))map[key].expired++;}return Object.values(map).sort((x,y)=>standardRank(x.standard)-standardRank(y.standard));
+    const map={};for(const c of scoped.certifications){const key=normalizeStandardLabel(c.standard);if(!map[key])map[key]={standard:key,total:0,active:0,expiring:0,expired:0};map[key].total++;const d=daysUntil(c.valid_until);if(c.status==='Certified'&&d!==null&&d>=0)map[key].active++;if(d!==null&&d>=0&&d<=90)map[key].expiring++;if(c.status==='Expired'||(d!==null&&d<0))map[key].expired++;}return Object.values(map).sort((x,y)=>standardRank(x.standard)-standardRank(y.standard));
   },[scoped.certifications]);
 
-  const certHealth=useMemo(()=>{let healthy=0,expiring=0,expired=0,other=0;for(const c of scoped.certifications){const d=daysUntil(c.valid_until);if(c.status==='Expired'||(d!==null&&d<0)){expired++;continue}if(d!==null&&d>=0&&d<=90){expiring++;continue}if(c.status==='Certified'){healthy++;continue}other++}return{healthy,expiring,expired,other,total:healthy+expiring+expired+other}},[scoped.certifications]);
+  const certHealth=useMemo(()=>{let healthy=0,expiring=0,expired=0,other=0;for(const c of scoped.certifications){const d=daysUntil(c.valid_until);if(c.status==='Expired'||(d!==null&&d<0)){expired++;continue}if(d!==null&&d>=0&&d<=90){expiring++;continue}if(c.status==='Certified'&&d!==null){healthy++;continue}other++}return{healthy,expiring,expired,other,total:healthy+expiring+expired+other}},[scoped.certifications]);
   const expiryForecast=useMemo(()=>{const now=new Date(),months=[];for(let i=0;i<6;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;months.push({key,label:d.toLocaleDateString('en-US',{month:'short'}),count:0})}const byKey=Object.fromEntries(months.map(m=>[m.key,m]));scoped.certifications.forEach(c=>{if(!c.valid_until)return;const d=new Date(`${c.valid_until}T00:00:00`);if(Number.isNaN(d.getTime()))return;const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;if(byKey[key])byKey[key].count++});return months},[scoped.certifications]);
   const simsByStandard=useMemo(()=>{const groups={};for(const item of scopedSimsItems){const a=simsAssessmentMap[item.assessment_id];if(!a)continue;const std=standardMap[a.standard_id];const key=std?.name||std?.code||'SIMS';if(!groups[key])groups[key]={name:key,total:0,verified:0,year:a.assessment_year};groups[key].total++;if(item.self_status==='Fulfilled'&&item.verifier_status==='Verified')groups[key].verified++;groups[key].year=Math.max(Number(groups[key].year||0),Number(a.assessment_year||0))}return Object.values(groups).map(g=>({...g,pct:g.total?Math.round(g.verified/g.total*100):0}))},[scopedSimsItems,simsAssessmentMap,standardMap]);
 
@@ -142,6 +144,7 @@ export default function DashboardV2(){
       <div className="risk-components">{risk.components.map(c=><button key={c.key} disabled={!c.available} onClick={()=>setDrill('risk')}><span>{c.label} · weight {c.weight}%</span><strong>{c.available?`${c.score}/100`:'N/A'}</strong><small>{c.detail}</small></button>)}</div>
     </section>
 
+    <IntegratedModules companyId={selectedCompany?.id||''} companies={data.companies} audits={data.audits} suppliers={data.suppliers} risks={data.riskAssessments} refreshKey={refreshKey}/>
     {drillConfig?<Drilldown config={drillConfig} close={()=>setDrill('')}/>:null}
 
     <section className="v2-grid two"><Panel title="Certification Health" tag={`${certHealth.total} records`}><CertificationHealth health={certHealth}/></Panel><Panel title="Expiry Forecast · 6 Months" tag="Forward view"><ExpiryForecast rows={expiryForecast}/></Panel></section>
@@ -168,7 +171,7 @@ function buildDrilldown(type,scoped,stats,companyMap,simsByStandard,risk){
   if(!type)return null;
   if(type==='risk')return{title:'Executive Risk Score Breakdown',subtitle:`Overall ${risk.score}/100 · ${risk.level}. Weights are re-normalized when a component has no available data.`,type:'risk',rows:risk.components.map(c=>({label:c.label,value:c.available?`${c.score}/100`:'N/A',detail:`Weight ${c.weight}% · ${c.detail}`}))};
   if(type==='sims')return{title:'SIMS Compliance Drill-down',subtitle:'Latest assessment per active standard.',type:'sims',rows:simsByStandard,href:'/sims/compliance'};
-  if(type==='activeCert')return{title:'Active Certificates',subtitle:`${stats.activeCert} currently certified record(s).`,href:'/certificates',rows:scoped.certifications.filter(c=>c.status==='Certified'&&(daysUntil(c.valid_until)===null||daysUntil(c.valid_until)>=0)).map(c=>({id:c.id,title:normalizeStandardLabel(c.standard),detail:`${companyMap[c.company_id]?.company_code||'-'} · ${c.certificate_number||'No certificate number'}`,value:c.valid_until?formatDate(c.valid_until):'-',meta:'Valid until'}))};
+  if(type==='activeCert')return{title:'Active Certificates',subtitle:`${stats.activeCert} currently certified record(s).`,href:'/certificates',rows:scoped.certifications.filter(c=>c.status==='Certified'&&daysUntil(c.valid_until)!==null&&daysUntil(c.valid_until)>=0).map(c=>({id:c.id,title:normalizeStandardLabel(c.standard),detail:`${companyMap[c.company_id]?.company_code||'-'} · ${c.certificate_number||'No certificate number'}`,value:c.valid_until?formatDate(c.valid_until):'-',meta:'Valid until'}))};
   if(type==='expiring')return{title:'Certificates Expiring ≤90 Days',subtitle:'Renewal attention list.',href:'/certificates',rows:scoped.certifications.filter(c=>{const d=daysUntil(c.valid_until);return d!==null&&d>=0&&d<=90}).sort((a,b)=>String(a.valid_until).localeCompare(String(b.valid_until))).map(c=>({id:c.id,title:normalizeStandardLabel(c.standard),detail:`${companyMap[c.company_id]?.company_code||'-'} · ${c.certificate_number||'-'}`,value:`${daysUntil(c.valid_until)} days`,meta:formatDate(c.valid_until)}))};
   if(type==='expired')return{title:'Expired Certificates',subtitle:'Certificate validity already ended.',href:'/certificates',rows:scoped.certifications.filter(c=>{const d=daysUntil(c.valid_until);return c.status==='Expired'||(d!==null&&d<0)}).map(c=>({id:c.id,title:normalizeStandardLabel(c.standard),detail:`${companyMap[c.company_id]?.company_code||'-'} · ${c.certificate_number||'-'}`,value:formatDate(c.valid_until),meta:'Expired'}))};
   if(type==='audits')return{title:'Upcoming Audits ≤30 Days',subtitle:'Nearest audit schedules requiring preparation.',href:'/audits',rows:scoped.audits.filter(a=>{const d=daysUntil(a.start_date);return d!==null&&d>=0&&d<=30&&!['Done','Cancelled'].includes(a.status)}).map(a=>({id:a.id,title:a.title||a.audit_type,detail:`${companyMap[a.company_id]?.company_code||'-'} · ${a.audit_type}`,value:formatDate(a.start_date),meta:a.status}))};
