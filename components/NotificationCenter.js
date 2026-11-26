@@ -4,20 +4,25 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { daysUntil, formatDate } from '../lib/monitoring';
+import {fetchAllRows} from '../lib/fetchAllRows';
+import {latestBy,supplierRisk,moduleMetrics} from '../lib/moduleMetrics';
+import {canAccessPath} from '../lib/systemUsers';
 
 const PRIORITY_RANK = { critical: 0, high: 1, warning: 2, info: 3 };
 
-export default function NotificationCenter(){
+export default function NotificationCenter({role='viewer'}){
   const [open,setOpen]=useState(false);
   const [loading,setLoading]=useState(false);
   const [alerts,setAlerts]=useState([]);
+  const [error,setError]=useState('');
+  const running=useRef(false);
   const rootRef=useRef(null);
 
   useEffect(()=>{
     loadAlerts();
     const id=setInterval(loadAlerts,5*60*1000);
     return()=>clearInterval(id);
-  },[]);
+  },[role]);
 
   useEffect(()=>{
     function onDoc(e){ if(rootRef.current&&!rootRef.current.contains(e.target)) setOpen(false); }
@@ -26,19 +31,22 @@ export default function NotificationCenter(){
   },[]);
 
   async function loadAlerts(){
-    if(!supabase)return;
-    setLoading(true);
+    if(!supabase||running.current)return;
+    running.current=true;setLoading(true);setError('');
     try{
+      const read=(t,f)=>fetchAllRows(()=>supabase.from(t).select(f));
       const [certs,audits,grievances,actions,simsItems,companies,suppliers,risk]=await Promise.all([
-        supabase.from('certifications').select('id,company_id,standard,certificate_number,status,valid_until'),
-        supabase.from('audit_events').select('id,company_id,title,audit_type,start_date,status'),
-        supabase.from('grievances').select('id,case_id,company_id,company,issue_title,status,opened_date'),
-        supabase.from('grievance_actions').select('id,grievance_id,action_id,action_description,target_date,status'),
-        supabase.from('sims_assessment_items').select('id,self_status,verifier_status'),
-        supabase.from('companies').select('id,company_code,company_name'),
-        supabase.from('spatial_suppliers').select('id,supplier_name,company_id'),
-        supabase.from('supplier_risk_assessments').select('id,supplier_id,risk_level,risk_score,assessed_at').order('assessed_at',{ascending:false}),
+        read('certifications','id,company_id,standard,certificate_number,status,valid_until'),
+        read('audit_events','id,company_id,title,audit_type,start_date,status'),
+        read('grievances','id,case_id,company_id,company,issue_title,status,opened_date'),
+        read('grievance_actions','id,grievance_id,action_id,action_description,target_date,status'),
+        read('sims_assessment_items','id,self_status,verifier_status'),
+        read('companies','id,company_code,company_name'),
+        read('spatial_suppliers','id,supplier_name,company_id'),
+        read('supplier_risk_assessments','id,supplier_id,risk_level,risk_score,assessed_at,assessment_json'),
       ]);
+      const base=[certs,audits,grievances,actions,simsItems,companies,suppliers,risk];
+      if(base.some(r=>r.error))throw Error('One or more monitoring sources are unavailable.');
       const companyMap=Object.fromEntries((companies.data||[]).map(c=>[c.id,c]));
       const grievanceMap=Object.fromEntries((grievances.data||[]).map(g=>[g.id,g]));
       const supplierMap=Object.fromEntries((suppliers.data||[]).map(s=>[s.id,s]));
@@ -46,7 +54,7 @@ export default function NotificationCenter(){
       const companyLabel=id=>companyMap[id]?.company_code||companyMap[id]?.company_name||'Company';
 
       for(const c of certs.data||[]){
-        const d=daysUntil(c.valid_until); if(d===null)continue;
+        const d=daysUntil(c.valid_until); if(d===null&&c.status!=='Expired')continue;
         if(c.status==='Expired'||d<0) next.push({priority:'critical',title:`${c.standard} certificate expired`,detail:`${companyLabel(c.company_id)} · ${c.valid_until?formatDate(c.valid_until):'No validity date'}`,href:'/certificates'});
         else if(d<=30) next.push({priority:'high',title:`${c.standard} expires in ${d} day${d===1?'':'s'}`,detail:`${companyLabel(c.company_id)} · renewal attention`,href:'/certificates'});
         else if(d<=90) next.push({priority:'warning',title:`${c.standard} expires in ${d} days`,detail:`${companyLabel(c.company_id)} · upcoming renewal`,href:'/certificates'});
@@ -76,18 +84,31 @@ export default function NotificationCenter(){
       if(pending)next.push({priority:'warning',title:`${pending} SIMS item${pending===1?'':'s'} pending verification`,detail:'Fulfilled assessments are waiting for verifier review.',href:'/sims/assessment'});
 
       const seen=new Set();
-      for(const r of risk.data||[]){
+      for(const r of latestBy(risk.data||[],'supplier_id','assessed_at').values()){
         if(seen.has(r.supplier_id))continue; seen.add(r.supplier_id);
-        if(!['High','Critical'].includes(r.risk_level))continue;
+        if(!['High','Critical'].includes(supplierRisk(r)))continue;
         const s=supplierMap[r.supplier_id];
         next.push({priority:r.risk_level==='Critical'?'critical':'high',title:`${r.risk_level} supplier spatial risk`,detail:`${s?.supplier_name||'Supplier'} · ${r.risk_score}/100${s?.company_id?` · ${companyLabel(s.company_id)}`:''}`,href:'/spatial-monitoring'});
       }
 
+      if(role==='admin'){
+        const pairs=await Promise.all([
+          read('smd2_audit_findings','id,audit_id,category,description,due_date'),
+          read('smd2_finding_updates','id,finding_id,status,created_at'),
+          read('smd2_no_buy_decisions','id,supplier_id,decision,decided_at'),
+          read('smd2_company_legal_register','id,company_id,document_type,document_number,valid_until'),
+          fetchAllRows(()=>supabase.from('smd2_kpi_observations').select('id,company_id,period_month,metric_code,actual,target,created_at').eq('period_month',new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit'}).formatToParts(new Date()).filter(p=>p.type==='year'||p.type==='month').map(p=>p.value).join('-')+'-01'))
+        ]);
+        if(pairs.some(r=>r.error))throw Error('Additional module alerts are unavailable.');
+        const [findings,updates,decisions,legal,kpis]=pairs.map(r=>r.data);
+        const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit'}).formatToParts(new Date());
+        const period=parts.find(p=>p.type==='year').value+'-'+parts.find(p=>p.type==='month').value;
+        const m=moduleMetrics({findings,updates,decisions,legal,kpis,companies:companies.data,audits:audits.data,suppliers:suppliers.data,risks:risk.data,links:[],layers:[],documents:[]},'',period);
+        next.push(...m.notices);
+      }
       next.sort((x,y)=>(PRIORITY_RANK[x.priority]??9)-(PRIORITY_RANK[y.priority]??9));
-      setAlerts(next.slice(0,40));
-    }catch{
-      // The notification center is intentionally non-blocking. Optional modules may not exist on older deployments.
-    }finally{setLoading(false)}
+      setAlerts(next.filter(a=>canAccessPath(role,a.href)).slice(0,100));
+    }catch(e){setAlerts([]);setError(e.message||'Attention data unavailable.');}finally{running.current=false;setLoading(false)}
   }
 
   const urgent=useMemo(()=>alerts.filter(a=>a.priority==='critical'||a.priority==='high').length,[alerts]);
@@ -102,8 +123,8 @@ export default function NotificationCenter(){
     </button>
     {open?<div className="notify-panel">
       <div className="notify-head"><div><strong>Attention Center</strong><span>{urgent} urgent · {alerts.length} total</span></div><button className="notify-refresh" onClick={loadAlerts}>{loading?'Refreshing…':'Refresh'}</button></div>
-      <div className="notify-list">{alerts.length?alerts.map((a,i)=><Link key={`${a.title}-${i}`} href={a.href} className="notify-item" onClick={()=>setOpen(false)}><span className={`notify-dot ${a.priority}`}/><span className="notify-copy"><strong>{a.title}</strong><span>{a.detail}</span></span></Link>):<div className="notify-empty">No active attention items.</div>}</div>
-      <div className="notify-foot">Built from live Certification, Audit, Grievance, SIMS and Spatial Risk data.</div>
+      <div className="notify-list">{error?<div className="notify-empty" role="alert">{error} Refresh before interpreting alerts.</div>:loading?<div className="notify-empty">Retrieving attention items…</div>:alerts.length?alerts.map((a,i)=><Link key={`${a.title}-${i}`} href={a.href} className="notify-item" onClick={()=>setOpen(false)}><span className={`notify-dot ${a.priority}`}/><span className="notify-copy"><strong>{a.title}</strong><span>{a.detail}</span></span></Link>):<div className="notify-empty">No attention items in available records.</div>}</div>
+      <div className="notify-foot">In-app alerts from current registers. Up to 100 items; no email or push delivery.</div>
     </div>:null}
   </div>
 }

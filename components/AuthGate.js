@@ -156,7 +156,7 @@ export default function AuthGate({ children }) {
             <strong>System Monitoring</strong>
           </div>
           <div className={styles.accountArea}>
-            <NotificationCenter />
+            <NotificationCenter role={currentUser.role}/>
             {currentUser.role==='admin' ? (
               <button type="button" className={styles.signOutButton} onClick={()=>router.push('/access-control')}>
                 User Access
