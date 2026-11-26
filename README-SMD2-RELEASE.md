@@ -11,3 +11,5 @@
 3. Browser UAT: login admin/assessor, all seven main menus, import a synthetic GeoJSON and PDF digital/scanned in isolated staging or approved test workflow; verify original download, page markers, no external document network traffic, role deny, error and empty states, all buttons, mobile layout, existing workflow regression.
 4. Verify independent database backup/restore and review remaining security advisors, dependency lock/audit and public repository confidentiality; no internal evidence or sensitive geometries committed to GitHub.
 5. Only after sign-off stage a production build, verify production variables and migrate changes from smd-v2 to main with rollback plan. Current production branch remains unchanged.
+
+- Incomplete local screenings cannot be saved as final risk records. Newly saved preliminary local assessments are classified as unverified in supplier intelligence. Official screening results must match the entered data before saving.
