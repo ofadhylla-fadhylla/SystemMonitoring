@@ -112,7 +112,7 @@ export default function GrievanceTracker() {
   }
 
   return <div className="page-wrap">
-    <div className="page-heading"><div><h1>Grievance Tracker</h1><p>Register, monitor, filter and analyze stakeholder grievance cases.</p></div><button className="primary-btn" onClick={()=>setShowForm(true)}>+ Add Grievance</button></div>
+    <div className="page-heading" style={{background:"linear-gradient(115deg,#064b38,#27855d)",borderRadius:18,padding:24,color:"#fff"}}><div><div style={{fontSize:11,letterSpacing:1.5,color:"#c1e7cf",fontWeight:700}}>SMD 2.0 / CASE MANAGEMENT</div><h1 style={{color:"#fff"}}>Grievance Tracker</h1><p style={{color:"#e1f2e6"}}>Register, monitor, filter and analyze stakeholder grievance cases.</p></div><button className="primary-btn" style={{background:"#d8f0d8",color:"#164a33"}} onClick={()=>setShowForm(true)}>+ Add Grievance</button></div>
     {error?<div className="sync-error"><strong>Supabase error</strong><span>{error}</span></div>:<div className="sync-success">● Supabase mode — shared grievance database</div>}
 
     <section className="grievance-filter-panel panel">

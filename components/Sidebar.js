@@ -7,7 +7,7 @@ import { canAccessPath } from '../lib/systemUsers';
 
 const groups = [
   { key:'monitoring', label:'Monitoring', icon:'risk', tone:'cyan', items:[['/monitoring','Monitoring Overview'],['/spatial-monitoring','Spatial Monitoring / GeoWatch'],['/non-spatial-monitoring','Non-Spatial Monitoring']] },
-  { key:'certification', label:'Certification', icon:'certificate', tone:'green', items:[['/certification','Certification Overview'],['/sims/assessment','SIMS Assessment'],['/sims/action-plan','SIMS Action Plan'],['/sims/compliance','Compliance Status'],['/certificates','Certificate Register'],['/audits','Audit & Findings'],['/quotations','Quotations']] },
+  { key:'certification', label:'Certification', icon:'certificate', tone:'green', items:[['/certification','Certification Overview'],['/sims/assessment','SIMS Assessment'],['/sims/action-plan','SIMS Action Plan'],['/sims/compliance','Compliance Status'],['/certificates','Certificate Register'],['/audits','Audit Monitoring'],['/audit-findings','Audit Findings'],['/quotations','Quotations']] },
   { key:'grievance', label:'Grievance Tracker', icon:'grievance', tone:'orange', items:[['/grievances','Grievance Register'],['/actions','Action Monitoring']] },
   { key:'legacy', label:'More tools', icon:'report', tone:'slate', items:[['/master-data','Master Company & Site'],['/weekly-report','Weekly Report'],['/executive-report','Executive Report'],['/early-warning','Early Warning'],['/audit-room','Digital Audit Room'],['/innovation-cockpit','Innovation Cockpit'],['/innovation-impact','Innovation Impact'],['/competition-demo','Presentation Mode'],['/documents','NDPE Records']] }
 ];
