@@ -18,6 +18,6 @@ export async function POST(req){try{
  let response;try{response=await fetch('https://ai-gateway.vercel.sh/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({model,messages,temperature:0.1,max_tokens:700,providerOptions:{gateway:{zeroDataRetention:true,disallowPromptTraining:true}}}),cache:'no-store',signal:AbortSignal.timeout(22000)});}catch{throw new RequestError(502,'AI provider connection failed.');}
  if(!response.ok)throw new RequestError(502,'AI provider unavailable or quota/policy rejected the request.');
  const j=await response.json(),answer=String(j.choices?.[0]?.message?.content||'').trim();if(!answer)throw new RequestError(502,'No answer returned by provider.');
- const citations=[...answer.matchAll(/\[(\d+)\]/g)].map(x=>Number(x[1]));if(citations.some(n=>n<1||n>docs.length))throw new RequestError(502,'AI answer contained an invalid source reference. Use keyword search.');
+ const citations=[...answer.matchAll(/\[(\d+)\]/g)].map(x=>Number(x[1]));if(!citations.length||citations.some(n=>n<1||n>docs.length))throw new RequestError(502,'AI answer did not contain valid source references. Use keyword search.');
  return json({answer:answer.slice(0,12000),sources:docs,generated:true,model:String(j.model||model).slice(0,120)});
  }catch(e){return failure(e);}}

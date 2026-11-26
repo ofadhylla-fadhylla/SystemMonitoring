@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import {operatorClient,failure,RequestError} from '../../../lib/secureRequest';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -120,6 +121,7 @@ function dedupe(rows) {
 
 export async function GET(request) {
   try {
+    await operatorClient(request);
     const {searchParams}=new URL(request.url);
     const start=safeText(searchParams.get('start'),10), end=safeText(searchParams.get('end'),10), entity=safeText(searchParams.get('entity'),180), code=safeText(searchParams.get('code'),30), extra=safeText(searchParams.get('extra'),180), language=safeText(searchParams.get('language'),30);
     const areas=parseAreaTerms(searchParams.get('areas'));
@@ -152,5 +154,5 @@ export async function GET(request) {
       positive,negative,needsReview,
       totals:{positive:positive.length,negative:negative.length,needsReview:needsReview.length,total:positive.length+negative.length+needsReview.length,raw:clean.length}
     });
-  } catch(error){const message=error?.name==='AbortError'?'Sumber berita terlalu lama merespons. Silakan coba lagi.':(error?.message||'Gagal mengambil berita.');return NextResponse.json({error:`Sumber berita tidak dapat diakses: ${message}`},{status:502})}
+  } catch(error){if(error instanceof RequestError)return failure(error);const message=error?.name==='AbortError'?'Sumber berita terlalu lama merespons. Silakan coba lagi.':(error?.message||'Gagal mengambil berita.');return NextResponse.json({error:`Sumber berita tidak dapat diakses: ${message}`},{status:502})}
 }

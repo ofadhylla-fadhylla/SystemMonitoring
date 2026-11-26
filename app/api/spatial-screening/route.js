@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import forestMaster from './kawasan-hutan-master.json';
+import {operatorClient,body as readBody,failure,RequestError} from '../../../lib/secureRequest';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,7 @@ const KHG_LAYER = `${BIG_NATURAL_RESOURCES}/37`;
 const BHUMI_WMS = 'https://bhumi.atrbpn.go.id/mapproxy/mapproxy/service';
 
 function finiteNumber(value) {
+  if(value===null||value===undefined||String(value).trim()==='')return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -537,7 +539,8 @@ function buildRisk({ hgu, peat, peatFunction, khg, forest, claimedLandStatus, do
 
 export async function POST(request) {
   try {
-    const body = await request.json();
+    await operatorClient(request);
+    const body = await readBody(request);
     const lat = finiteNumber(body?.latitude);
     const lon = finiteNumber(body?.longitude);
     if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
@@ -579,6 +582,6 @@ export async function POST(request) {
       disclaimer: 'Hasil ini adalah screening spasial dan penjelasan otomatis berbasis data sumber yang berhasil dibaca. Bukan penetapan legal. Status HGU/SHM final harus dikonfirmasi melalui dokumen dan layanan resmi ATR/BPN; status kawasan hutan pada screening ini mengikuti master SHP yang diunggah dan hanya berlaku pada cakupan dataset tersebut; status gambut harus dikonfirmasi terhadap dataset resmi yang berlaku.',
     });
   } catch (error) {
-    return NextResponse.json({ error: error?.message || 'Gagal menjalankan spatial screening.' }, { status: 500 });
+    return error instanceof RequestError?failure(error):NextResponse.json({error:'Spatial screening unavailable. Try again later.'},{status:502,headers:{'Cache-Control':'private, no-store'}});
   }
 }
