@@ -1,0 +1,4 @@
+# SMD2 supplier intelligence & knowledge iteration
+- Admin-only append-only supplier relationship register, upstream/downstream traversal and linked risk/No Buy context. Latest record per directed pair defines current link; inactive excludes it. Dates are recorded metadata, not historical as-of reconstruction. Cycle check is client-side, cycle warning handles inconsistent/concurrent writes. No volume/mass balance, shipment-level traceability, buyer approvals or automated purchasing block.
+- Ranked keyword search RPC (security invoker), snippets and pagination; document text fetched on demand. DOCX main body and TXT automatic local extraction with user review; no external service, PDF/OCR or generative AI. DOCX headers, footnotes, images and page numbering not indexed automatically; ZIP size/format restrictions apply.
+- Migration smd2_supplier_traceability_and_ranked_knowledge_search on shared SMD database. No production branch changes. Browser UAT still required.
