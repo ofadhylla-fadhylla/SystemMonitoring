@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '../../lib/supabaseClient';
 import styles from './page.module.css';
 
@@ -37,7 +38,7 @@ export default function NonSpatialMonitoring(){
   async function generate(e){e.preventDefault();setLoading(true);setError('');setData(null);try{const p=new URLSearchParams({start,end,entity,code,extra,language,max,areas:areaTerms.join('||'),areaExtra});const r=await fetch(`/api/non-spatial-monitoring?${p.toString()}`,{cache:'no-store'});const j=await r.json();if(!r.ok)throw new Error(j.error||'Gagal generate monitoring.');setData(j)}catch(err){setError(err.message||'Gagal generate monitoring.')}finally{setLoading(false)}}
   function exportCsv(){if(!data)return;const lines=[['Sentiment','Tanggal','Judul','Media','Negara Sumber','Bahasa','Search Engine','URL'],...rows.map(r=>[r.sentiment,formatDate(r.seenDate),r.title,r.domain,r.sourceCountry,r.language,r.sourceEngine,r.url])];const csv=lines.map(r=>r.map(csvCell).join(',')).join('\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`Monitoring_Non_Spasial_${start}_${end}.csv`;a.click();URL.revokeObjectURL(a.href)}
   const badgeStyle=s=>s==='positive'?{}:s==='negative'?{}:{background:'#fff4cf',color:'#7a5a00',border:'1px solid #ead48c'};
-  return <div className={styles.page}>
+  return <div className={styles.page}><div style={{marginBottom:12}}><Link href="/monitoring">Monitoring Overview</Link></div>
     <div className={styles.heading}><div><h1>Non-Spatial Monitoring</h1><p>Monitoring pemberitaan berdasarkan periode, entity, alias perusahaan, serta keyword yang dipilih.</p></div></div>
     <section className={styles.panel}><form className={styles.formGrid} onSubmit={generate}>
       <div className={styles.field}><label>Entity / Company</label><select value={company} onChange={e=>setCompany(e.target.value)}><option value="GROUP">KPN Plantations Group</option>{companies.map(c=><option key={c.company_code} value={c.company_code}>{c.company_code} — {c.company_name}</option>)}<option value="CUSTOM">Custom keyword / entity</option></select></div>
